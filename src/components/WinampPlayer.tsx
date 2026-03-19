@@ -4,9 +4,9 @@ import { motion, AnimatePresence } from 'motion/react';
 import Visualizer from './Visualizer';
 import RetroButton from './RetroButton';
 import { Track, VisualizerMode } from '../types';
-import { auth, signIn, signOut, db } from '../firebase';
+import { auth, signIn, signOut, db, handleFirestoreError, OperationType } from '../firebase';
 import { onAuthStateChanged } from 'firebase/auth';
-import { collection, query, where, onSnapshot, addDoc, deleteDoc, doc, serverTimestamp } from 'firebase/firestore';
+import { collection, query, where, onSnapshot, addDoc, deleteDoc, doc, serverTimestamp, setDoc } from 'firebase/firestore';
 
 import ThinkingMode from './ThinkingMode';
 
@@ -24,14 +24,18 @@ const WinampPlayer: React.FC = () => {
   const [volume, setVolume] = useState(0.5);
   const [vizMode, setVizMode] = useState<VisualizerMode>('spectrum');
   const [vizColor, setVizColor] = useState('#00ff00');
+  const [fftSize, setFftSize] = useState(256);
+  const [vizDensity, setVizDensity] = useState(10);
   const [favorites, setFavorites] = useState<any[]>([]);
   const [showPlaylist, setShowPlaylist] = useState(false);
-  const [playlistTab, setPlaylistTab] = useState<'search' | 'playlist'>('search');
+  const [playlistTab, setPlaylistTab] = useState<'search' | 'playlist' | 'connections'>('search');
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState<Track[]>([]);
   const [isSearching, setIsSearching] = useState(false);
   const [isThinkingOpen, setIsThinkingOpen] = useState(false);
   const [isSpotifyConnected, setIsSpotifyConnected] = useState(false);
+  const [isYouTubeConnected, setIsYouTubeConnected] = useState(false);
+  const [isSettingsLoaded, setIsSettingsLoaded] = useState(false);
   
   const SAMPLE_TRACKS: Track[] = [
     { id: '1', title: 'CYBERPUNK 2077', artist: 'HYPER', source: 'local', url: 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3' },
@@ -63,33 +67,119 @@ const WinampPlayer: React.FC = () => {
   useEffect(() => {
     if (!user) {
       setFavorites([]);
+      setIsSettingsLoaded(false);
       return;
     }
-    const q = query(collection(db, 'favorites'), where('uid', '==', user.uid));
-    const unsubscribe = onSnapshot(q, (snapshot) => {
+
+    // Load Favorites
+    const favPath = 'favorites';
+    const q = query(collection(db, favPath), where('uid', '==', user.uid));
+    const unsubscribeFavs = onSnapshot(q, (snapshot) => {
       setFavorites(snapshot.docs.map(d => ({ id: d.id, ...d.data() })));
+    }, (error) => {
+      handleFirestoreError(error, OperationType.GET, favPath);
     });
-    return () => unsubscribe();
+
+    // Load Settings
+    const settingsPath = `settings/${user.uid}`;
+    const unsubscribeSettings = onSnapshot(doc(db, 'settings', user.uid), (snapshot) => {
+      if (snapshot.exists()) {
+        const data = snapshot.data();
+        if (data.volume !== undefined) setVolume(data.volume);
+        if (data.vizMode !== undefined) setVizMode(data.vizMode);
+        if (data.vizColor !== undefined) setVizColor(data.vizColor);
+        if (data.fftSize !== undefined) setFftSize(data.fftSize);
+        if (data.vizDensity !== undefined) setVizDensity(data.vizDensity);
+      }
+      setIsSettingsLoaded(true);
+    }, (error) => {
+      handleFirestoreError(error, OperationType.GET, settingsPath);
+    });
+
+    return () => {
+      unsubscribeFavs();
+      unsubscribeSettings();
+    };
+  }, [user]);
+
+  // Save Settings
+  useEffect(() => {
+    if (!user || !isSettingsLoaded) return;
+
+    const saveSettings = async () => {
+      const settingsPath = `settings/${user.uid}`;
+      try {
+        await setDoc(doc(db, 'settings', user.uid), {
+          uid: user.uid,
+          volume,
+          vizMode,
+          vizColor,
+          fftSize,
+          vizDensity,
+          updatedAt: serverTimestamp()
+        }, { merge: true });
+      } catch (error) {
+        handleFirestoreError(error, OperationType.WRITE, settingsPath);
+      }
+    };
+
+    const timeoutId = setTimeout(saveSettings, 1000); // Debounce saves
+    return () => clearTimeout(timeoutId);
+  }, [user, isSettingsLoaded, volume, vizMode, vizColor, fftSize, vizDensity]);
+
+  // Check connection status
+  useEffect(() => {
+    if (!user) return;
+    const checkStatus = async () => {
+      try {
+        const res = await fetch(`/api/auth/status?userId=${user.uid}`);
+        const data = await res.json();
+        setIsSpotifyConnected(data.spotify);
+        setIsYouTubeConnected(data.youtube);
+      } catch (error) {
+        console.error("Failed to check connection status:", error);
+      }
+    };
+    checkStatus();
   }, [user]);
 
   useEffect(() => {
     const handleMessage = (event: MessageEvent) => {
       if (event.data?.type === 'SPOTIFY_AUTH_SUCCESS') {
         setIsSpotifyConnected(true);
-        // In a real app, we'd store the token here.
+      } else if (event.data?.type === 'YOUTUBE_AUTH_SUCCESS') {
+        setIsYouTubeConnected(true);
       }
     };
     window.addEventListener('message', handleMessage);
     return () => window.removeEventListener('message', handleMessage);
   }, []);
 
+  useEffect(() => {
+    if (analyserRef.current) {
+      analyserRef.current.fftSize = fftSize;
+    }
+  }, [fftSize]);
+
   const connectSpotify = async () => {
+    if (!user) return;
     try {
-      const res = await fetch('/api/auth/spotify/url');
+      const res = await fetch(`/api/auth/spotify/url?userId=${user.uid}`);
       const { url } = await res.json();
       window.open(url, 'spotify_auth', 'width=600,height=800');
     } catch (error) {
       console.error('Spotify auth error:', error);
+    }
+  };
+
+  const connectYouTube = async () => {
+    if (!user) return;
+    try {
+      const res = await fetch(`/api/auth/youtube/url?userId=${user.uid}`);
+      const { url } = await res.json();
+      window.open(url, 'youtube_auth', 'width=600,height=800');
+    } catch (error) {
+      console.error('YouTube auth error:', error);
     }
   };
 
@@ -98,9 +188,10 @@ const WinampPlayer: React.FC = () => {
     setIsSearching(true);
     setSearchResults([]);
     try {
+      const userIdParam = user ? `&userId=${user.uid}` : '';
       const [spotifyRes, youtubeRes] = await Promise.all([
-        fetch(`/api/spotify/search?q=${encodeURIComponent(searchQuery)}`),
-        fetch(`/api/youtube/search?q=${encodeURIComponent(searchQuery)}`)
+        fetch(`/api/spotify/search?q=${encodeURIComponent(searchQuery)}${userIdParam}`),
+        fetch(`/api/youtube/search?q=${encodeURIComponent(searchQuery)}${userIdParam}`)
       ]);
 
       const spotifyData = await spotifyRes.json();
@@ -122,7 +213,7 @@ const WinampPlayer: React.FC = () => {
     if (!audioContextRef.current) {
       audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)();
       analyserRef.current = audioContextRef.current.createAnalyser();
-      analyserRef.current.fftSize = 256;
+      analyserRef.current.fftSize = fftSize;
       
       if (audioRef.current && !sourceRef.current) {
         sourceRef.current = audioContextRef.current.createMediaElementSource(audioRef.current);
@@ -161,21 +252,26 @@ const WinampPlayer: React.FC = () => {
   const toggleFavorite = async () => {
     if (!user || !currentTrack) return;
     const existing = favorites.find(f => f.externalId === currentTrack.id);
-    if (existing) {
-      await deleteDoc(doc(db, 'favorites', existing.id));
-    } else {
-      await addDoc(collection(db, 'favorites'), {
-        uid: user.uid,
-        type: 'track',
-        id: currentTrack.id,
-        externalId: currentTrack.id,
-        title: currentTrack.title,
-        subtitle: currentTrack.artist,
-        thumbnail: currentTrack.thumbnail || '',
-        source: currentTrack.source,
-        url: currentTrack.url || '',
-        createdAt: serverTimestamp()
-      });
+    const favPath = 'favorites';
+    try {
+      if (existing) {
+        await deleteDoc(doc(db, favPath, existing.id));
+      } else {
+        await addDoc(collection(db, favPath), {
+          uid: user.uid,
+          type: 'track',
+          id: currentTrack.id,
+          externalId: currentTrack.id,
+          title: currentTrack.title,
+          subtitle: currentTrack.artist,
+          thumbnail: currentTrack.thumbnail || '',
+          source: currentTrack.source,
+          url: currentTrack.url || '',
+          createdAt: serverTimestamp()
+        });
+      }
+    } catch (error) {
+      handleFirestoreError(error, OperationType.WRITE, favPath);
     }
   };
 
@@ -201,7 +297,7 @@ const WinampPlayer: React.FC = () => {
           <div className="flex gap-4 h-32">
             {/* Visualizer Section */}
             <div className="flex-1 relative group">
-              <Visualizer analyser={analyserRef.current} mode={vizMode} color={vizColor} />
+              <Visualizer analyser={analyserRef.current} mode={vizMode} color={vizColor} density={vizDensity} />
               <div className="absolute top-2 right-2 flex flex-col gap-2 opacity-0 group-hover:opacity-100 transition-opacity bg-black/50 p-1 rounded">
                 <div className="flex gap-1">
                   {['spectrum', 'oscilloscope', 'circles', 'plasma'].map(m => (
@@ -223,6 +319,38 @@ const WinampPlayer: React.FC = () => {
                       title={p.name}
                     />
                   ))}
+                </div>
+                
+                {/* Fine-tuning controls */}
+                <div className="flex flex-col gap-1 mt-1 border-t border-[#333] pt-1">
+                  {(vizMode === 'spectrum' || vizMode === 'oscilloscope') && (
+                    <div className="flex flex-col gap-0.5">
+                      <span className="text-[6px] text-[#00ff00] uppercase">FFT SIZE</span>
+                      <input 
+                        type="range"
+                        min="5"
+                        max="12"
+                        step="1"
+                        value={Math.log2(fftSize)}
+                        onChange={(e) => setFftSize(Math.pow(2, parseInt(e.target.value)))}
+                        className="w-full accent-[#00ff00] h-1 bg-[#222] appearance-none cursor-pointer"
+                      />
+                    </div>
+                  )}
+                  {vizMode === 'circles' && (
+                    <div className="flex flex-col gap-0.5">
+                      <span className="text-[6px] text-[#00ff00] uppercase">DENSITY</span>
+                      <input 
+                        type="range"
+                        min="1"
+                        max="50"
+                        step="1"
+                        value={vizDensity}
+                        onChange={(e) => setVizDensity(parseInt(e.target.value))}
+                        className="w-full accent-[#00ff00] h-1 bg-[#222] appearance-none cursor-pointer"
+                      />
+                    </div>
+                  )}
                 </div>
               </div>
             </div>
@@ -317,7 +445,54 @@ const WinampPlayer: React.FC = () => {
                   >
                     MY PLAYLIST ({favorites.length})
                   </button>
+                  <button 
+                    onClick={() => setPlaylistTab('connections')}
+                    className={cn(
+                      "flex-1 py-1 text-[10px] font-bold transition-colors",
+                      playlistTab === 'connections' ? "bg-[#333] text-[#00ff00]" : "text-[#444] hover:text-[#00aa00]"
+                    )}
+                  >
+                    CONNECTIONS
+                  </button>
                 </div>
+
+                {playlistTab === 'connections' && (
+                  <div className="flex flex-col gap-2 p-2">
+                    <div className="flex items-center justify-between bg-black border border-[#333] p-2">
+                      <div className="flex items-center gap-2">
+                        <div className={cn("w-2 h-2 rounded-full", isSpotifyConnected ? "bg-[#1DB954]" : "bg-[#444]")} />
+                        <span className="text-[10px] font-bold text-white">SPOTIFY</span>
+                      </div>
+                      <button 
+                        onClick={connectSpotify}
+                        className={cn(
+                          "px-2 py-1 text-[8px] font-bold border",
+                          isSpotifyConnected ? "border-[#1DB954] text-[#1DB954]" : "border-[#444] text-[#444] hover:border-[#00ff00] hover:text-[#00ff00]"
+                        )}
+                      >
+                        {isSpotifyConnected ? 'CONNECTED' : 'CONNECT'}
+                      </button>
+                    </div>
+                    <div className="flex items-center justify-between bg-black border border-[#333] p-2">
+                      <div className="flex items-center gap-2">
+                        <div className={cn("w-2 h-2 rounded-full", isYouTubeConnected ? "bg-[#FF0000]" : "bg-[#444]")} />
+                        <span className="text-[10px] font-bold text-white">YOUTUBE</span>
+                      </div>
+                      <button 
+                        onClick={connectYouTube}
+                        className={cn(
+                          "px-2 py-1 text-[8px] font-bold border",
+                          isYouTubeConnected ? "border-[#FF0000] text-[#FF0000]" : "border-[#444] text-[#444] hover:border-[#00ff00] hover:text-[#00ff00]"
+                        )}
+                      >
+                        {isYouTubeConnected ? 'CONNECTED' : 'CONNECT'}
+                      </button>
+                    </div>
+                    {!user && (
+                      <p className="text-[8px] text-[#ff0000] text-center uppercase">Login required to save connections</p>
+                    )}
+                  </div>
+                )}
 
                 {playlistTab === 'search' ? (
                   <>
@@ -405,9 +580,14 @@ const WinampPlayer: React.FC = () => {
                             <span className="truncate max-w-[150px]">{fav.title} - {fav.subtitle}</span>
                           </div>
                           <button 
-                            onClick={(e) => {
+                            onClick={async (e) => {
                               e.stopPropagation();
-                              deleteDoc(doc(db, 'favorites', fav.id));
+                              const favPath = `favorites/${fav.id}`;
+                              try {
+                                await deleteDoc(doc(db, 'favorites', fav.id));
+                              } catch (error) {
+                                handleFirestoreError(error, OperationType.DELETE, favPath);
+                              }
                             }}
                             className="text-[#444] hover:text-red-500"
                           >

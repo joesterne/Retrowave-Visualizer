@@ -5,9 +5,10 @@ interface VisualizerProps {
   analyser: AnalyserNode | null;
   mode: VisualizerMode;
   color?: string;
+  density?: number;
 }
 
-const Visualizer: React.FC<VisualizerProps> = ({ analyser, mode, color = '#00ff00' }) => {
+const Visualizer: React.FC<VisualizerProps> = ({ analyser, mode, color = '#00ff00', density = 10 }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
   useEffect(() => {
@@ -17,10 +18,8 @@ const Visualizer: React.FC<VisualizerProps> = ({ analyser, mode, color = '#00ff0
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
-    const bufferLength = analyser.frequencyBinCount;
-    const dataArray = new Uint8Array(bufferLength);
-
     let animationId: number;
+    let dataArray = new Uint8Array(analyser.frequencyBinCount);
 
     const draw = () => {
       animationId = requestAnimationFrame(draw);
@@ -28,6 +27,11 @@ const Visualizer: React.FC<VisualizerProps> = ({ analyser, mode, color = '#00ff0
       const width = canvas.width;
       const height = canvas.height;
       ctx.clearRect(0, 0, width, height);
+
+      const bufferLength = analyser.frequencyBinCount;
+      if (dataArray.length !== bufferLength) {
+        dataArray = new Uint8Array(bufferLength);
+      }
 
       if (mode === 'spectrum' || mode === 'bars') {
         analyser.getByteFrequencyData(dataArray);
@@ -69,7 +73,9 @@ const Visualizer: React.FC<VisualizerProps> = ({ analyser, mode, color = '#00ff0
         const centerX = width / 2;
         const centerY = height / 2;
         
-        for (let i = 0; i < bufferLength; i += 10) {
+        // Use density prop here
+        const step = Math.max(1, Math.floor(100 / density));
+        for (let i = 0; i < bufferLength; i += step) {
           const radius = (dataArray[i] / 255) * (Math.min(width, height) / 2);
           ctx.beginPath();
           ctx.arc(centerX, centerY, radius, 0, 2 * Math.PI);
@@ -92,7 +98,7 @@ const Visualizer: React.FC<VisualizerProps> = ({ analyser, mode, color = '#00ff0
     return () => {
       cancelAnimationFrame(animationId);
     };
-  }, [analyser, mode, color]);
+  }, [analyser, mode, color, density]);
 
   return (
     <canvas 

@@ -23,8 +23,12 @@
       "type": "object",
       "properties": {
         "uid": { "type": "string", "description": "Owner's user ID" },
-        "theme": { "type": "string", "description": "Selected retro theme" },
-        "visualizerMode": { "type": "string", "description": "Default visualizer mode" }
+        "volume": { "type": "number", "description": "Player volume" },
+        "vizMode": { "type": "string", "description": "Visualizer mode" },
+        "vizColor": { "type": "string", "description": "Visualizer color" },
+        "fftSize": { "type": "number", "description": "FFT size" },
+        "vizDensity": { "type": "number", "description": "Visualizer density" },
+        "updatedAt": { "type": "string", "format": "date-time", "description": "Last update timestamp" }
       },
       "required": ["uid"]
     }
@@ -37,6 +41,10 @@
     "/settings/{userId}": {
       "schema": "UserSetting",
       "description": "User settings document"
+    },
+    "/tokens/{userId}/providers/{provider}": {
+      "schema": "object",
+      "description": "OAuth tokens for external providers (Spotify, YouTube)"
     }
   }
 }

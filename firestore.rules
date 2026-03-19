@@ -22,8 +22,12 @@ service cloud.firestore {
     // Document ID: userId
     // Fields:
     //   - uid: string (required, immutable) - Owner's user ID
-    //   - theme: string (optional) - Selected retro theme
-    //   - visualizerMode: string (optional) - Default visualizer mode
+    //   - volume: number (optional) - Player volume
+    //   - vizMode: string (optional) - Visualizer mode
+    //   - vizColor: string (optional) - Visualizer color
+    //   - fftSize: number (optional) - FFT size
+    //   - vizDensity: number (optional) - Visualizer density
+    //   - updatedAt: timestamp (optional) - Last update time
     //
     // ===============================================================
 
@@ -63,7 +67,13 @@ service cloud.firestore {
 
     function isValidSetting(data) {
       return data.keys().hasAll(['uid']) &&
-             data.uid is string && data.uid.size() > 0;
+             data.uid is string && data.uid.size() > 0 &&
+             (!('volume' in data) || (data.volume is number && data.volume >= 0 && data.volume <= 1)) &&
+             (!('vizMode' in data) || (data.vizMode is string && data.vizMode.size() < 50)) &&
+             (!('vizColor' in data) || (data.vizColor is string && data.vizColor.size() < 10)) &&
+             (!('fftSize' in data) || (data.fftSize is number)) &&
+             (!('vizDensity' in data) || (data.vizDensity is number)) &&
+             (!('updatedAt' in data) || (data.updatedAt is timestamp));
     }
 
     // ===============================================================
@@ -80,6 +90,10 @@ service cloud.firestore {
     match /settings/{userId} {
       allow read: if isOwner(userId);
       allow write: if isOwner(userId) && isValidSetting(request.resource.data) && uidUnchanged();
+    }
+
+    match /tokens/{userId}/{document=**} {
+      allow read, write: if false; // Only server-side access
     }
   }
 }
