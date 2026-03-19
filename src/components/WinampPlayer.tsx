@@ -1,5 +1,15 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Play, Pause, SkipBack, SkipForward, Volume2, Search, Heart, Brain, Menu, X } from 'lucide-react';
+import { Play, Pause, SkipBack, SkipForward, Volume2, Search, Heart, Brain, Menu, X, ExternalLink, Radio } from 'lucide-react';
+
+declare global {
+  interface Window {
+    YT: any;
+    onYouTubeIframeAPIReady: () => void;
+    Spotify: any;
+    onSpotifyWebPlaybackSDKReady: () => void;
+  }
+}
+
 import { motion, AnimatePresence } from 'motion/react';
 import Visualizer from './Visualizer';
 import RetroButton from './RetroButton';
@@ -7,6 +17,7 @@ import { Track, VisualizerMode } from '../types';
 import { auth, signIn, signOut, db, handleFirestoreError, OperationType } from '../firebase';
 import { onAuthStateChanged } from 'firebase/auth';
 import { collection, query, where, onSnapshot, addDoc, deleteDoc, doc, serverTimestamp, setDoc } from 'firebase/firestore';
+import { generateArtistRadio } from '../services/geminiService';
 
 import ThinkingMode from './ThinkingMode';
 
@@ -36,6 +47,8 @@ const WinampPlayer: React.FC = () => {
   const [isSpotifyConnected, setIsSpotifyConnected] = useState(false);
   const [isYouTubeConnected, setIsYouTubeConnected] = useState(false);
   const [isSettingsLoaded, setIsSettingsLoaded] = useState(false);
+  const [popoutWindow, setPopoutWindow] = useState<Window | null>(null);
+  const [isGeneratingRadio, setIsGeneratingRadio] = useState(false);
   
   const SAMPLE_TRACKS: Track[] = [
     { id: '1', title: 'CYBERPUNK 2077', artist: 'HYPER', source: 'local', url: 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3' },
@@ -56,6 +69,70 @@ const WinampPlayer: React.FC = () => {
   const analyserRef = useRef<AnalyserNode | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const sourceRef = useRef<MediaElementAudioSourceNode | null>(null);
+  const popoutWindowRef = useRef<Window | null>(null);
+  const youtubePlayerRef = useRef<any>(null);
+  const spotifyPlayerRef = useRef<any>(null);
+  const [spotifyToken, setSpotifyToken] = useState<string | null>(null);
+  const [isSpotifyReady, setIsSpotifyReady] = useState(false);
+  const [spotifyDeviceId, setSpotifyDeviceId] = useState<string | null>(null);
+
+  // Sync with popout window
+  useEffect(() => {
+    if (!analyserRef.current || !popoutWindow) return;
+
+    const dataArray = new Uint8Array(analyserRef.current.frequencyBinCount);
+    let animationId: number;
+
+    const sendData = () => {
+      if (popoutWindow.closed) {
+        setPopoutWindow(null);
+        return;
+      }
+      analyserRef.current?.getByteFrequencyData(dataArray);
+      popoutWindow.postMessage({
+        type: 'VIZ_DATA',
+        data: dataArray,
+        mode: vizMode,
+        color: vizColor,
+        density: vizDensity
+      }, '*');
+      animationId = requestAnimationFrame(sendData);
+    };
+
+    sendData();
+    return () => cancelAnimationFrame(animationId);
+  }, [popoutWindow, vizMode, vizColor, vizDensity]);
+
+  const togglePopout = () => {
+    if (popoutWindow) {
+      popoutWindow.close();
+      setPopoutWindow(null);
+    } else {
+      const win = window.open('/visualizer', 'WinampVisualizer', 'width=800,height=600');
+      setPopoutWindow(win);
+    }
+  };
+
+  useEffect(() => {
+    // Load YouTube API
+    if (!window.YT) {
+      const tag = document.createElement('script');
+      tag.src = "https://www.youtube.com/iframe_api";
+      const firstScriptTag = document.getElementsByTagName('script')[0];
+      firstScriptTag.parentNode?.insertBefore(tag, firstScriptTag);
+    }
+
+    // Load Spotify SDK
+    if (!window.onSpotifyWebPlaybackSDKReady) {
+      const tag = document.createElement('script');
+      tag.src = "https://sdk.scdn.co/spotify-player.js";
+      document.body.appendChild(tag);
+    }
+
+    window.onSpotifyWebPlaybackSDKReady = () => {
+      // We'll initialize it when we have a token
+    };
+  }, []);
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (u) => {
@@ -226,8 +303,66 @@ const WinampPlayer: React.FC = () => {
     }
   };
 
-  const togglePlay = () => {
+  useEffect(() => {
+    if (user && isSpotifyConnected) {
+      fetch(`/api/auth/spotify/token?userId=${user.uid}`)
+        .then(res => res.json())
+        .then(data => {
+          if (data.accessToken) {
+            setSpotifyToken(data.accessToken);
+          }
+        });
+    }
+  }, [user, isSpotifyConnected]);
+
+  useEffect(() => {
+    if (spotifyToken && !spotifyPlayerRef.current) {
+      const player = new (window as any).Spotify.Player({
+        name: 'Winamp Web Player',
+        getOAuthToken: (cb: any) => { cb(spotifyToken); },
+        volume: volume
+      });
+
+      player.addListener('ready', ({ device_id }: { device_id: string }) => {
+        console.log('Ready with Device ID', device_id);
+        setSpotifyDeviceId(device_id);
+        setIsSpotifyReady(true);
+      });
+
+      player.addListener('not_ready', ({ device_id }: { device_id: string }) => {
+        console.log('Device ID has gone offline', device_id);
+        setIsSpotifyReady(false);
+      });
+
+      player.connect();
+      spotifyPlayerRef.current = player;
+    }
+  }, [spotifyToken]);
+
+  const togglePlay = async () => {
     initAudio();
+    if (!currentTrack) return;
+
+    if (currentTrack.source === 'youtube') {
+      if (youtubePlayerRef.current) {
+        if (isPlaying) {
+          youtubePlayerRef.current.pauseVideo();
+        } else {
+          youtubePlayerRef.current.playVideo();
+        }
+        setIsPlaying(!isPlaying);
+      }
+      return;
+    }
+
+    if (currentTrack.source === 'spotify') {
+      if (spotifyPlayerRef.current) {
+        await spotifyPlayerRef.current.togglePlay();
+        setIsPlaying(!isPlaying);
+      }
+      return;
+    }
+
     if (isPlaying) {
       audioRef.current?.pause();
     } else {
@@ -236,16 +371,113 @@ const WinampPlayer: React.FC = () => {
     setIsPlaying(!isPlaying);
   };
 
-  const handleTrackSelect = (track: Track) => {
-    if (track.source === 'youtube') {
-      window.open(track.url, '_blank');
-      return;
+  const handleTrackSelect = async (track: Track) => {
+    initAudio();
+    
+    // Stop current playback
+    if (audioRef.current) {
+      audioRef.current.pause();
+      audioRef.current.src = '';
     }
+    if (youtubePlayerRef.current) {
+      youtubePlayerRef.current.stopVideo();
+    }
+    if (spotifyPlayerRef.current) {
+      await spotifyPlayerRef.current.pause();
+    }
+
     setCurrentTrack(track);
     setIsPlaying(true);
+
+    if (track.source === 'youtube') {
+      const videoId = track.id;
+      if (!youtubePlayerRef.current) {
+        youtubePlayerRef.current = new (window as any).YT.Player('youtube-player', {
+          height: '0',
+          width: '0',
+          videoId: videoId,
+          playerVars: {
+            autoplay: 1,
+            controls: 0,
+          },
+          events: {
+            onReady: (event: any) => {
+              event.target.playVideo();
+            },
+            onStateChange: (event: any) => {
+              if (event.data === (window as any).YT.PlayerState.ENDED) {
+                setIsPlaying(false);
+              }
+            }
+          }
+        });
+      } else {
+        youtubePlayerRef.current.loadVideoById(videoId);
+      }
+      return;
+    }
+
+    if (track.source === 'spotify') {
+      if (spotifyDeviceId && spotifyToken) {
+        await fetch(`https://api.spotify.com/v1/me/player/play?device_id=${spotifyDeviceId}`, {
+          method: 'PUT',
+          body: JSON.stringify({ uris: [`spotify:track:${track.id}`] }),
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${spotifyToken}`
+          }
+        });
+      }
+      return;
+    }
+
     if (audioRef.current) {
       audioRef.current.src = track.url || '';
       audioRef.current.play();
+    }
+  };
+
+  const handleArtistRadio = async () => {
+    if (!currentTrack) return;
+    setIsGeneratingRadio(true);
+    try {
+      const recommendations = await generateArtistRadio(currentTrack);
+      const radioTracks: Track[] = [];
+
+      // Process recommendations in parallel for better performance
+      const searchPromises = recommendations.map(async (rec) => {
+        const queryStr = `${rec.title} ${rec.artist}`;
+        const userIdParam = user ? `&userId=${user.uid}` : '';
+        
+        try {
+          const [spotifyRes, youtubeRes] = await Promise.all([
+            fetch(`/api/spotify/search?q=${encodeURIComponent(queryStr)}${userIdParam}`),
+            fetch(`/api/youtube/search?q=${encodeURIComponent(queryStr)}${userIdParam}`)
+          ]);
+
+          const spotifyData = await spotifyRes.json();
+          const youtubeData = await youtubeRes.json();
+
+          return spotifyData.tracks?.[0] || youtubeData.tracks?.[0];
+        } catch (err) {
+          console.error(`Search failed for ${queryStr}:`, err);
+          return null;
+        }
+      });
+
+      const results = await Promise.all(searchPromises);
+      results.forEach(track => {
+        if (track) radioTracks.push(track);
+      });
+
+      if (radioTracks.length > 0) {
+        setSearchResults(radioTracks);
+        setPlaylistTab('search');
+      }
+    } catch (error) {
+      console.error('Artist Radio error:', error);
+    } finally {
+      setIsGeneratingRadio(false);
     }
   };
 
@@ -277,6 +509,9 @@ const WinampPlayer: React.FC = () => {
 
   return (
     <div className="flex flex-col items-center justify-center min-h-screen bg-[#111] text-[#00ff00] font-mono p-4">
+      {/* Hidden YouTube Player */}
+      <div id="youtube-player" style={{ display: 'none' }}></div>
+
       {/* Main Player Window */}
       <div className="w-full max-w-md bg-[#222] border-4 border-[#444] shadow-[8px_8px_0px_rgba(0,0,0,0.8)] overflow-hidden">
         {/* Title Bar */}
@@ -308,6 +543,13 @@ const WinampPlayer: React.FC = () => {
                       title={m}
                     />
                   ))}
+                  <button 
+                    onClick={togglePopout}
+                    className={cn("w-2 h-2 flex items-center justify-center text-[#00ff00] hover:text-white")}
+                    title="Pop Out Visualizer"
+                  >
+                    <ExternalLink size={8} />
+                  </button>
                 </div>
                 <div className="flex gap-1 flex-wrap max-w-[60px]">
                   {RETRO_PALETTE.map(p => (
@@ -357,9 +599,23 @@ const WinampPlayer: React.FC = () => {
 
             {/* Info Section */}
             <div className="w-32 flex flex-col justify-between text-[10px] bg-black p-2 border border-[#333]">
-              <div>
+              <div className="flex flex-col gap-1">
                 <div className="text-[#00ff00] truncate">{currentTrack?.title || 'NO TRACK'}</div>
                 <div className="text-[#00aa00] truncate">{currentTrack?.artist || 'IDLE'}</div>
+                {currentTrack && (
+                  <button 
+                    onClick={handleArtistRadio}
+                    disabled={isGeneratingRadio}
+                    className={cn(
+                      "mt-1 flex items-center gap-1 text-[8px] uppercase px-1 py-0.5 border border-[#333] hover:bg-[#333] transition-colors",
+                      isGeneratingRadio && "animate-pulse opacity-50"
+                    )}
+                    title="Generate Artist Radio"
+                  >
+                    <Radio size={8} />
+                    {isGeneratingRadio ? 'TUNING...' : 'ARTIST RADIO'}
+                  </button>
+                )}
               </div>
               <div className="flex flex-col gap-1">
                 <div className="flex justify-between">

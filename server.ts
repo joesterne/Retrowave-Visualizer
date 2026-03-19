@@ -13,20 +13,60 @@ const __dirname = path.dirname(__filename);
 
 // Initialize Firebase Admin
 const firebaseConfigPath = path.join(process.cwd(), "firebase-applet-config.json");
-if (fs.existsSync(firebaseConfigPath)) {
-  const firebaseConfig = JSON.parse(fs.readFileSync(firebaseConfigPath, "utf-8"));
-  admin.initializeApp({
-    projectId: firebaseConfig.projectId,
-  });
-}
+let db: admin.firestore.Firestore;
 
-const db = admin.firestore();
+console.log("Starting Firebase initialization...");
+try {
+  if (fs.existsSync(firebaseConfigPath)) {
+    const configContent = fs.readFileSync(firebaseConfigPath, "utf-8");
+    console.log("Firebase config file found, parsing...");
+    const firebaseConfig = JSON.parse(configContent);
+    console.log("Initializing Firebase with project:", firebaseConfig.projectId);
+    
+    if (admin.apps.length === 0) {
+      admin.initializeApp({
+        projectId: firebaseConfig.projectId,
+      });
+      console.log("Firebase Admin initialized successfully.");
+    } else {
+      console.log("Firebase Admin already initialized.");
+    }
+    
+    const dbId = firebaseConfig.firestoreDatabaseId || '(default)';
+    console.log("Using Firestore database:", dbId);
+    db = admin.firestore(dbId);
+    console.log("Firestore instance acquired.");
+  } else {
+    console.error("Firebase config NOT found at:", firebaseConfigPath);
+    // In dev mode, we might want to continue without Firebase if it's not critical for startup
+    // but here the app seems to depend on it.
+    // process.exit(1);
+  }
+} catch (error) {
+  console.error("Failed to initialize Firebase Admin:", error);
+  // process.exit(1);
+}
 
 async function startServer() {
   const app = express();
   const PORT = 3000;
 
+  console.log("Setting up Express server...");
   app.use(express.json());
+
+  // Health check endpoint
+  app.get("/api/health", (req, res) => {
+    res.json({ 
+      status: "ok", 
+      firebase: !!db,
+      env: {
+        spotify: !!process.env.VITE_SPOTIFY_CLIENT_ID,
+        youtube: !!process.env.YOUTUBE_API_KEY,
+        gemini: !!process.env.GEMINI_API_KEY,
+        appUrl: !!process.env.APP_URL
+      }
+    });
+  });
 
   // Helper to get/refresh tokens
   async function getStoredToken(userId: string, provider: 'spotify' | 'youtube') {
@@ -96,6 +136,40 @@ async function startServer() {
   }
 
   // Spotify Auth
+  app.get("/api/auth/spotify/token", async (req, res) => {
+    const { userId } = req.query;
+    if (!userId) return res.status(400).json({ error: "userId required" });
+
+    try {
+      const token = await getStoredToken(userId as string, 'spotify');
+      if (token) {
+        res.json({ accessToken: token });
+      } else {
+        res.status(404).json({ error: "Token not found" });
+      }
+    } catch (error) {
+      console.error("Error fetching Spotify token:", error);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  app.get("/api/auth/youtube/token", async (req, res) => {
+    const { userId } = req.query;
+    if (!userId) return res.status(400).json({ error: "userId required" });
+
+    try {
+      const token = await getStoredToken(userId as string, 'youtube');
+      if (token) {
+        res.json({ accessToken: token });
+      } else {
+        res.status(404).json({ error: "Token not found" });
+      }
+    } catch (error) {
+      console.error("Error fetching YouTube token:", error);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
   app.get("/api/auth/spotify/url", (req, res) => {
     const { userId } = req.query;
     if (!userId) return res.status(400).json({ error: "userId required" });

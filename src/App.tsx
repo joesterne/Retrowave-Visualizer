@@ -4,8 +4,15 @@
  */
 
 import WinampPlayer from './components/WinampPlayer';
+import VisualizerWindow from './components/VisualizerWindow';
 
 export default function App() {
+  const path = window.location.pathname;
+
+  if (path === '/visualizer') {
+    return <VisualizerWindow />;
+  }
+
   return (
     <div className="min-h-screen bg-black">
       <WinampPlayer />
