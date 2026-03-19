@@ -1,0 +1,85 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // ===============================================================
+    // Assumed Data Model
+    // ===============================================================
+    //
+    // Collection: favorites
+    // Document ID: auto-generated
+    // Fields:
+    //   - uid: string (required, immutable) - Owner's user ID
+    //   - type: string (required, track|visualizer) - Type of favorite
+    //   - id: string (required) - External ID
+    //   - title: string (required) - Display title
+    //   - subtitle: string (optional) - Display subtitle
+    //   - thumbnail: string (optional) - Thumbnail URL
+    //   - source: string (optional) - Source (spotify, youtube, local)
+    //   - url: string (optional) - Audio or video URL
+    //   - createdAt: timestamp (required, immutable) - Creation timestamp
+    //
+    // Collection: settings
+    // Document ID: userId
+    // Fields:
+    //   - uid: string (required, immutable) - Owner's user ID
+    //   - theme: string (optional) - Selected retro theme
+    //   - visualizerMode: string (optional) - Default visualizer mode
+    //
+    // ===============================================================
+
+    // ===============================================================
+    // Helper Functions
+    // ===============================================================
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function isDocOwner() {
+      return isAuthenticated() && request.auth.uid == resource.data.uid;
+    }
+
+    function uidUnchanged() {
+      return !('uid' in request.resource.data) || request.resource.data.uid == request.auth.uid;
+    }
+
+    function uidNotModified() {
+      return !('uid' in request.resource.data) || request.resource.data.uid == resource.data.uid;
+    }
+
+    function isValidFavorite(data) {
+      return data.keys().hasAll(['uid', 'type', 'id', 'title', 'createdAt']) &&
+             data.uid is string && data.uid.size() > 0 &&
+             data.type in ['track', 'visualizer'] &&
+             data.id is string && data.id.size() > 0 &&
+             data.title is string && data.title.size() > 0 && data.title.size() < 255 &&
+             (!('source' in data) || (data.source is string && data.source.size() < 50)) &&
+             (!('url' in data) || (data.url is string && data.url.size() < 1000)) &&
+             data.createdAt is timestamp;
+    }
+
+    function isValidSetting(data) {
+      return data.keys().hasAll(['uid']) &&
+             data.uid is string && data.uid.size() > 0;
+    }
+
+    // ===============================================================
+    // Rules
+    // ===============================================================
+
+    match /favorites/{favoriteId} {
+      allow read: if isDocOwner();
+      allow create: if isAuthenticated() && isValidFavorite(request.resource.data) && isOwner(request.resource.data.uid) && uidUnchanged();
+      allow update: if isDocOwner() && isValidFavorite(request.resource.data) && uidNotModified();
+      allow delete: if isDocOwner();
+    }
+
+    match /settings/{userId} {
+      allow read: if isOwner(userId);
+      allow write: if isOwner(userId) && isValidSetting(request.resource.data) && uidUnchanged();
+    }
+  }
+}

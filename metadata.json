@@ -1,0 +1,5 @@
+{
+  "name": "RetroWave Visualizer",
+  "description": "A 90s/2000s Winamp-inspired music visualizer with Spotify and YouTube integration, featuring AI-powered 'Genius' thinking mode.",
+  "requestFramePermissions": ["microphone"]
+}

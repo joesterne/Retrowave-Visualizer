@@ -1,0 +1,38 @@
+@import url('https://fonts.googleapis.com/css2?family=VT323&family=JetBrains+Mono:wght@400;700&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+  --font-retro: "VT323", monospace;
+}
+
+@layer base {
+  body {
+    @apply bg-black text-[#00ff00] font-mono;
+  }
+
+  /* Winamp-style scrollbar */
+  ::-webkit-scrollbar {
+    width: 12px;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: #000;
+    border: 1px solid #333;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background: #444;
+    border: 1px solid #666;
+    box-shadow: inset 1px 1px 0 #888;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    background: #555;
+  }
+}
+
+.winamp-text {
+  font-family: var(--font-retro);
+  text-shadow: 2px 2px 0px rgba(0,0,0,0.5);
+}
