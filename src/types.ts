@@ -6,6 +6,9 @@ export interface Favorite {
   title: string;
   subtitle?: string;
   thumbnail?: string;
+  source?: 'spotify' | 'youtube' | 'local';
+  url?: string;
+  order?: number;
   createdAt: any;
 }
 

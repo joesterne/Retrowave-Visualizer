@@ -1,10 +1,33 @@
+/// <reference types="vite/client" />
 import { initializeApp } from 'firebase/app';
 import { getAuth, GoogleAuthProvider, signInWithPopup } from 'firebase/auth';
 import { getFirestore, collection, doc, setDoc, deleteDoc, onSnapshot, query, where, orderBy, serverTimestamp, getDocFromServer } from 'firebase/firestore';
-import firebaseConfig from '../firebase-applet-config.json';
+import defaultFirebaseConfig from '../firebase-applet-config.json';
+
+const getEnv = (key: string, fallback: string) => {
+  const val = (import.meta as any).env[key];
+  if (!val || val === 'your_api_key_here' || val === 'YOUR_API_KEY') {
+    return fallback;
+  }
+  if (key === 'VITE_FIREBASE_API_KEY' && !val.startsWith('AIza')) {
+    return fallback;
+  }
+  return val;
+}
+
+const firebaseConfig = {
+  apiKey: getEnv('VITE_FIREBASE_API_KEY', defaultFirebaseConfig.apiKey),
+  authDomain: getEnv('VITE_FIREBASE_AUTH_DOMAIN', defaultFirebaseConfig.authDomain),
+  projectId: getEnv('VITE_FIREBASE_PROJECT_ID', defaultFirebaseConfig.projectId),
+  storageBucket: getEnv('VITE_FIREBASE_STORAGE_BUCKET', defaultFirebaseConfig.storageBucket),
+  messagingSenderId: getEnv('VITE_FIREBASE_MESSAGING_SENDER_ID', defaultFirebaseConfig.messagingSenderId),
+  appId: getEnv('VITE_FIREBASE_APP_ID', defaultFirebaseConfig.appId),
+  measurementId: getEnv('VITE_FIREBASE_MEASUREMENT_ID', defaultFirebaseConfig.measurementId || ''),
+  firestoreDatabaseId: getEnv('VITE_FIREBASE_DATABASE_ID', (defaultFirebaseConfig as any).firestoreDatabaseId || '')
+};
 
 const app = initializeApp(firebaseConfig);
-export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
+export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId as string);
 export const auth = getAuth(app);
 export const googleProvider = new GoogleAuthProvider();
 

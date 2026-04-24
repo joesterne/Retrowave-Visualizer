@@ -13,11 +13,12 @@ declare global {
 import { motion, AnimatePresence } from 'motion/react';
 import Visualizer from './Visualizer';
 import RetroButton from './RetroButton';
-import { Track, VisualizerMode } from '../types';
-import { auth, signIn, signOut, db, handleFirestoreError, OperationType } from '../firebase';
-import { onAuthStateChanged } from 'firebase/auth';
-import { collection, query, where, onSnapshot, addDoc, deleteDoc, doc, serverTimestamp, setDoc } from 'firebase/firestore';
+import { Track, VisualizerMode, Favorite } from '../types';
+import { db, handleFirestoreError, OperationType } from '../firebase';
+import { collection, query, where, onSnapshot, addDoc, deleteDoc, doc, serverTimestamp, setDoc, writeBatch } from 'firebase/firestore';
 import { generateArtistRadio } from '../services/geminiService';
+import { DragDropContext, Droppable, Draggable, DropResult } from '@hello-pangea/dnd';
+import { useAuth } from '../context/AuthContext';
 
 import ThinkingMode from './ThinkingMode';
 
@@ -29,7 +30,7 @@ function cn(...inputs: ClassValue[]) {
 }
 
 const WinampPlayer: React.FC = () => {
-  const [user, setUser] = useState<any>(null);
+  const { user, signIn, signOut } = useAuth();
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTrack, setCurrentTrack] = useState<Track | null>(null);
   const [volume, setVolume] = useState(0.5);
@@ -135,13 +136,6 @@ const WinampPlayer: React.FC = () => {
   }, []);
 
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, (u) => {
-      setUser(u);
-    });
-    return () => unsubscribe();
-  }, []);
-
-  useEffect(() => {
     if (!user) {
       setFavorites([]);
       setIsSettingsLoaded(false);
@@ -152,7 +146,16 @@ const WinampPlayer: React.FC = () => {
     const favPath = 'favorites';
     const q = query(collection(db, favPath), where('uid', '==', user.uid));
     const unsubscribeFavs = onSnapshot(q, (snapshot) => {
-      setFavorites(snapshot.docs.map(d => ({ id: d.id, ...d.data() })));
+      const favs = snapshot.docs.map(d => ({ id: d.id, ...d.data() })) as Favorite[];
+      favs.sort((a, b) => {
+        const orderA = a.order ?? Number.MAX_SAFE_INTEGER;
+        const orderB = b.order ?? Number.MAX_SAFE_INTEGER;
+        if (orderA === orderB) {
+           return (a.createdAt?.toMillis?.() || 0) - (b.createdAt?.toMillis?.() || 0);
+        }
+        return orderA - orderB;
+      });
+      setFavorites(favs);
     }, (error) => {
       handleFirestoreError(error, OperationType.GET, favPath);
     });
@@ -239,24 +242,42 @@ const WinampPlayer: React.FC = () => {
   }, [fftSize]);
 
   const connectSpotify = async () => {
-    if (!user) return;
+    if (!user) {
+      alert('Please login first');
+      return;
+    }
     try {
       const res = await fetch(`/api/auth/spotify/url?userId=${user.uid}`);
-      const { url } = await res.json();
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || 'Failed to get auth URL');
+      }
+      const { url } = data;
+      if (!url) throw new Error('No auth URL returned');
       window.open(url, 'spotify_auth', 'width=600,height=800');
     } catch (error) {
       console.error('Spotify auth error:', error);
+      alert(`Spotify connection failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
   };
 
   const connectYouTube = async () => {
-    if (!user) return;
+    if (!user) {
+      alert('Please login first');
+      return;
+    }
     try {
       const res = await fetch(`/api/auth/youtube/url?userId=${user.uid}`);
-      const { url } = await res.json();
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || 'Failed to get auth URL');
+      }
+      const { url } = data;
+      if (!url) throw new Error('No auth URL returned');
       window.open(url, 'youtube_auth', 'width=600,height=800');
     } catch (error) {
       console.error('YouTube auth error:', error);
+      alert(`YouTube connection failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
   };
 
@@ -366,7 +387,9 @@ const WinampPlayer: React.FC = () => {
     if (isPlaying) {
       audioRef.current?.pause();
     } else {
-      audioRef.current?.play();
+      if (audioRef.current?.src) {
+        audioRef.current.play().catch(e => console.warn('Audio play failed:', e));
+      }
     }
     setIsPlaying(!isPlaying);
   };
@@ -377,7 +400,7 @@ const WinampPlayer: React.FC = () => {
     // Stop current playback
     if (audioRef.current) {
       audioRef.current.pause();
-      audioRef.current.src = '';
+      audioRef.current.removeAttribute('src');
     }
     if (youtubePlayerRef.current) {
       youtubePlayerRef.current.stopVideo();
@@ -431,9 +454,11 @@ const WinampPlayer: React.FC = () => {
       return;
     }
 
-    if (audioRef.current) {
-      audioRef.current.src = track.url || '';
-      audioRef.current.play();
+    if (audioRef.current && track.url) {
+      audioRef.current.src = track.url;
+      audioRef.current.play().catch((e) => console.warn('Audio play failed:', e));
+    } else if (audioRef.current) {
+      audioRef.current.removeAttribute('src');
     }
   };
 
@@ -504,6 +529,27 @@ const WinampPlayer: React.FC = () => {
       }
     } catch (error) {
       handleFirestoreError(error, OperationType.WRITE, favPath);
+    }
+  };
+
+  const handleDragEnd = async (result: DropResult) => {
+    if (!result.destination || !user) return;
+    const items = Array.from(favorites);
+    const [reorderedItem] = items.splice(result.source.index, 1);
+    items.splice(result.destination.index, 0, reorderedItem);
+    
+    // Optimistic update
+    setFavorites(items);
+
+    try {
+      const batch = writeBatch(db);
+      items.forEach((item, index) => {
+        const docRef = doc(db, 'favorites', item.id);
+        batch.update(docRef, { order: index });
+      });
+      await batch.commit();
+    } catch (error) {
+      handleFirestoreError(error, OperationType.WRITE, 'favorites');
     }
   };
 
@@ -716,6 +762,21 @@ const WinampPlayer: React.FC = () => {
                   <div className="flex flex-col gap-2 p-2">
                     <div className="flex items-center justify-between bg-black border border-[#333] p-2">
                       <div className="flex items-center gap-2">
+                        <div className={cn("w-2 h-2 rounded-full", user ? "bg-[#4285F4]" : "bg-[#444]")} />
+                        <span className="text-[10px] font-bold text-white">GOOGLE ACCOUNT</span>
+                      </div>
+                      <button 
+                        onClick={() => user ? signOut() : signIn().catch(e => console.error("Login failed:", e))}
+                        className={cn(
+                          "px-2 py-1 text-[8px] font-bold border",
+                          user ? "border-[#4285F4] text-[#4285F4] hover:text-[#ff0000] hover:border-[#ff0000]" : "border-[#444] text-[#444] hover:border-[#00ff00] hover:text-[#00ff00]"
+                        )}
+                      >
+                        {user ? 'SIGN OUT' : 'LOGIN'}
+                      </button>
+                    </div>
+                    <div className="flex items-center justify-between bg-black border border-[#333] p-2">
+                      <div className="flex items-center gap-2">
                         <div className={cn("w-2 h-2 rounded-full", isSpotifyConnected ? "bg-[#1DB954]" : "bg-[#444]")} />
                         <span className="text-[10px] font-bold text-white">SPOTIFY</span>
                       </div>
@@ -755,22 +816,32 @@ const WinampPlayer: React.FC = () => {
                     <div className="flex gap-2">
                       <input 
                         type="text"
-                        placeholder="SEARCH SPOTIFY / YOUTUBE..."
-                        className="flex-1 bg-black border border-[#333] px-2 py-1 text-xs focus:outline-none focus:border-[#00ff00]"
+                        placeholder={isSearching ? "SEARCHING..." : "SEARCH SPOTIFY / YOUTUBE..."}
+                        className={cn(
+                          "flex-1 bg-black border border-[#333] px-2 py-1 text-xs focus:outline-none focus:border-[#00ff00]",
+                          isSearching && "opacity-50 cursor-not-allowed"
+                        )}
                         value={searchQuery}
                         onChange={(e) => setSearchQuery(e.target.value)}
-                        onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
+                        onKeyDown={(e) => e.key === 'Enter' && !isSearching && handleSearch()}
+                        disabled={isSearching}
                       />
                       <RetroButton onClick={handleSearch} disabled={isSearching}>
-                        {isSearching ? <div className="w-3 h-3 border border-[#00ff00] border-t-transparent rounded-full animate-spin" /> : <Search size={12} />}
+                        {isSearching ? <div className="w-3 h-3 border border-[#00ff00] border-2 border-t-transparent rounded-full animate-spin" /> : <Search size={12} />}
                       </RetroButton>
                     </div>
 
-                    <div className="max-h-48 overflow-y-auto scrollbar-thin scrollbar-thumb-[#444] scrollbar-track-black">
-                      {searchResults.length > 0 && (
+                    <div className="max-h-48 overflow-y-auto scrollbar-thin scrollbar-thumb-[#444] scrollbar-track-black min-h-[100px]">
+                      {isSearching && (
+                        <div className="p-8 flex flex-col items-center justify-center gap-3 text-[#00ff00]">
+                          <div className="w-6 h-6 border-2 border-[#00ff00] border-t-transparent rounded-full animate-spin" />
+                          <span className="text-[10px] uppercase font-bold tracking-[0.2em] animate-pulse">Searching...</span>
+                        </div>
+                      )}
+                      {!isSearching && searchResults.length > 0 && (
                         <div className="p-2 text-[8px] text-[#444] uppercase border-b border-[#222]">Search Results</div>
                       )}
-                      {searchResults.map((track) => (
+                      {!isSearching && searchResults.map((track) => (
                         <div 
                           key={track.id}
                           onClick={() => handleTrackSelect(track)}
@@ -819,38 +890,53 @@ const WinampPlayer: React.FC = () => {
                         YOUR PLAYLIST IS EMPTY.<br/>HEART SOME TRACKS TO ADD THEM HERE.
                       </div>
                     ) : (
-                      favorites.map((fav) => (
-                        <div 
-                          key={fav.id}
-                          onClick={() => handleTrackSelect({ id: fav.externalId, title: fav.title, artist: fav.subtitle || '', source: fav.source || 'spotify', url: fav.url })}
-                          className={cn(
-                            "flex items-center justify-between p-2 hover:bg-[#333] cursor-pointer text-[10px] border-b border-[#222]",
-                            currentTrack?.id === fav.externalId && "bg-[#003300]"
+                      <DragDropContext onDragEnd={handleDragEnd}>
+                        <Droppable droppableId="favorites-list">
+                          {(provided) => (
+                            <div {...provided.droppableProps} ref={provided.innerRef}>
+                              {favorites.map((fav, index) => (
+                                <Draggable key={fav.id} draggableId={fav.id} index={index}>
+                                  {(provided) => (
+                                    <div 
+                                      ref={provided.innerRef}
+                                      {...provided.draggableProps}
+                                      {...provided.dragHandleProps}
+                                      onClick={() => handleTrackSelect({ id: fav.externalId, title: fav.title, artist: fav.subtitle || '', source: fav.source || 'spotify', url: fav.url })}
+                                      className={cn(
+                                        "flex items-center justify-between p-2 hover:bg-[#333] cursor-pointer text-[10px] border-b border-[#222]",
+                                        currentTrack?.id === fav.externalId && "bg-[#003300]"
+                                      )}
+                                    >
+                                      <div className="flex items-center gap-2">
+                                        <Heart size={8} className="text-[#00ff00]" fill="#00ff00" />
+                                        <span className={cn("text-[8px] px-1 rounded", fav.source === 'spotify' ? "bg-[#1DB954] text-black" : "bg-[#FF0000] text-white")}>
+                                          {fav.source === 'spotify' ? 'SPOT' : 'YOUT'}
+                                        </span>
+                                        <span className="truncate max-w-[150px]">{fav.title} - {fav.subtitle}</span>
+                                      </div>
+                                      <button 
+                                        onClick={async (e) => {
+                                          e.stopPropagation();
+                                          const favPath = `favorites/${fav.id}`;
+                                          try {
+                                            await deleteDoc(doc(db, 'favorites', fav.id));
+                                          } catch (error) {
+                                            handleFirestoreError(error, OperationType.DELETE, favPath);
+                                          }
+                                        }}
+                                        className="text-[#444] hover:text-red-500"
+                                      >
+                                        <X size={10} />
+                                      </button>
+                                    </div>
+                                  )}
+                                </Draggable>
+                              ))}
+                              {provided.placeholder}
+                            </div>
                           )}
-                        >
-                          <div className="flex items-center gap-2">
-                            <Heart size={8} className="text-[#00ff00]" fill="#00ff00" />
-                            <span className={cn("text-[8px] px-1 rounded", fav.source === 'spotify' ? "bg-[#1DB954] text-black" : "bg-[#FF0000] text-white")}>
-                              {fav.source === 'spotify' ? 'SPOT' : 'YOUT'}
-                            </span>
-                            <span className="truncate max-w-[150px]">{fav.title} - {fav.subtitle}</span>
-                          </div>
-                          <button 
-                            onClick={async (e) => {
-                              e.stopPropagation();
-                              const favPath = `favorites/${fav.id}`;
-                              try {
-                                await deleteDoc(doc(db, 'favorites', fav.id));
-                              } catch (error) {
-                                handleFirestoreError(error, OperationType.DELETE, favPath);
-                              }
-                            }}
-                            className="text-[#444] hover:text-red-500"
-                          >
-                            <X size={10} />
-                          </button>
-                        </div>
-                      ))
+                        </Droppable>
+                      </DragDropContext>
                     )}
                   </div>
                 )}
@@ -866,8 +952,11 @@ const WinampPlayer: React.FC = () => {
             <span>{isPlaying ? 'PLAYING' : 'STOPPED'}</span>
           </div>
           <div className="flex gap-2">
-            {!isSpotifyConnected && (
+            {user && !isSpotifyConnected && (
               <button onClick={connectSpotify} className="hover:underline text-[#1DB954]">CONNECT SPOTIFY</button>
+            )}
+            {user && !isYouTubeConnected && (
+              <button onClick={connectYouTube} className="hover:underline text-[#FF0000]">CONNECT YOUTUBE</button>
             )}
             {!user ? (
               <button onClick={signIn} className="hover:underline">LOGIN</button>

@@ -5,17 +5,24 @@
 
 import WinampPlayer from './components/WinampPlayer';
 import VisualizerWindow from './components/VisualizerWindow';
+import { AuthProvider } from './context/AuthContext';
 
 export default function App() {
   const path = window.location.pathname;
 
   if (path === '/visualizer') {
-    return <VisualizerWindow />;
+    return (
+      <AuthProvider>
+        <VisualizerWindow />
+      </AuthProvider>
+    );
   }
 
   return (
-    <div className="min-h-screen bg-black">
-      <WinampPlayer />
-    </div>
+    <AuthProvider>
+      <div className="min-h-screen bg-black">
+        <WinampPlayer />
+      </div>
+    </AuthProvider>
   );
 }

@@ -23,7 +23,8 @@ try {
     const firebaseConfig = JSON.parse(configContent);
     console.log("Initializing Firebase with project:", firebaseConfig.projectId);
     
-    if (admin.apps.length === 0) {
+    const apps = admin.apps;
+    if (!apps || apps.length === 0) {
       admin.initializeApp({
         projectId: firebaseConfig.projectId,
       });
@@ -175,7 +176,19 @@ async function startServer() {
     if (!userId) return res.status(400).json({ error: "userId required" });
 
     const client_id = process.env.VITE_SPOTIFY_CLIENT_ID;
-    const redirect_uri = `${process.env.APP_URL}/auth/spotify/callback`;
+    const app_url = process.env.APP_URL;
+    
+    console.log('Generating Spotify Auth URL:', {
+      userId,
+      hasClientId: !!client_id,
+      app_url
+    });
+
+    if (!app_url) {
+      return res.status(500).json({ error: "APP_URL not configured" });
+    }
+
+    const redirect_uri = `${app_url}/auth/spotify/callback`;
     const scope = "user-read-private user-read-email user-modify-playback-state user-read-playback-state streaming";
     
     const params = new URLSearchParams({
@@ -186,36 +199,55 @@ async function startServer() {
       state: userId as string,
     });
 
-    res.json({ url: `https://accounts.spotify.com/authorize?${params.toString()}` });
+    const url = `https://accounts.spotify.com/authorize?${params.toString()}`;
+    console.log('Spotify Auth URL:', url);
+    res.json({ url });
   });
 
   app.get("/auth/spotify/callback", async (req, res) => {
     const { code, state: userId } = req.query;
+    console.log('Spotify Callback received:', { hasCode: !!code, userId });
     if (!code || !userId) return res.status(400).send("Missing code or state");
 
     try {
+      const client_id = process.env.VITE_SPOTIFY_CLIENT_ID;
+      const client_secret = process.env.VITE_SPOTIFY_CLIENT_SECRET;
+      const app_url = process.env.APP_URL;
+
+      console.log('Exchanging Spotify code for tokens...', {
+        hasClientId: !!client_id,
+        hasClientSecret: !!client_secret,
+        app_url
+      });
+
       const response = await fetch("https://accounts.spotify.com/api/token", {
         method: "POST",
         headers: {
           "Content-Type": "application/x-www-form-urlencoded",
-          Authorization: `Basic ${Buffer.from(`${process.env.VITE_SPOTIFY_CLIENT_ID}:${process.env.VITE_SPOTIFY_CLIENT_SECRET}`).toString("base64")}`,
+          Authorization: `Basic ${Buffer.from(`${client_id}:${client_secret}`).toString("base64")}`,
         },
         body: new URLSearchParams({
           grant_type: "authorization_code",
           code: code as string,
-          redirect_uri: `${process.env.APP_URL}/auth/spotify/callback`,
+          redirect_uri: `${app_url}/auth/spotify/callback`,
         }),
       });
 
       const data = await response.json();
-      if (data.error) throw new Error(data.error_description);
+      if (data.error) {
+        console.error('Spotify token exchange error:', data);
+        throw new Error(data.error_description || data.error);
+      }
 
+      console.log('Spotify tokens received, storing in Firestore...');
       await db.collection('tokens').doc(userId as string).collection('providers').doc('spotify').set({
         accessToken: data.access_token,
         refreshToken: data.refresh_token,
         expiresAt: Date.now() + data.expires_in * 1000,
         updatedAt: admin.firestore.FieldValue.serverTimestamp(),
       });
+
+      console.log('Spotify tokens stored successfully');
 
       res.send(`
         <html>
@@ -244,7 +276,19 @@ async function startServer() {
     if (!userId) return res.status(400).json({ error: "userId required" });
 
     const client_id = process.env.GOOGLE_CLIENT_ID;
-    const redirect_uri = `${process.env.APP_URL}/auth/youtube/callback`;
+    const app_url = process.env.APP_URL;
+
+    console.log('Generating YouTube Auth URL:', {
+      userId,
+      hasClientId: !!client_id,
+      app_url
+    });
+
+    if (!app_url) {
+      return res.status(500).json({ error: "APP_URL not configured" });
+    }
+
+    const redirect_uri = `${app_url}/auth/youtube/callback`;
     const scope = "https://www.googleapis.com/auth/youtube.readonly https://www.googleapis.com/auth/youtube.force-ssl";
     
     const params = new URLSearchParams({
@@ -257,29 +301,46 @@ async function startServer() {
       state: userId as string,
     });
 
-    res.json({ url: `https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}` });
+    const url = `https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`;
+    console.log('YouTube Auth URL:', url);
+    res.json({ url });
   });
 
   app.get("/auth/youtube/callback", async (req, res) => {
     const { code, state: userId } = req.query;
+    console.log('YouTube Callback received:', { hasCode: !!code, userId });
     if (!code || !userId) return res.status(400).send("Missing code or state");
 
     try {
+      const client_id = process.env.GOOGLE_CLIENT_ID;
+      const client_secret = process.env.GOOGLE_CLIENT_SECRET;
+      const app_url = process.env.APP_URL;
+
+      console.log('Exchanging YouTube code for tokens...', {
+        hasClientId: !!client_id,
+        hasClientSecret: !!client_secret,
+        app_url
+      });
+
       const response = await fetch("https://oauth2.googleapis.com/token", {
         method: "POST",
         headers: { "Content-Type": "application/x-www-form-urlencoded" },
         body: new URLSearchParams({
           code: code as string,
-          client_id: process.env.GOOGLE_CLIENT_ID!,
-          client_secret: process.env.GOOGLE_CLIENT_SECRET!,
-          redirect_uri: `${process.env.APP_URL}/auth/youtube/callback`,
+          client_id: client_id!,
+          client_secret: client_secret!,
+          redirect_uri: `${app_url}/auth/youtube/callback`,
           grant_type: "authorization_code",
         }),
       });
 
       const data = await response.json();
-      if (data.error) throw new Error(data.error_description);
+      if (data.error) {
+        console.error('YouTube token exchange error:', data);
+        throw new Error(data.error_description || data.error);
+      }
 
+      console.log('YouTube tokens received, storing in Firestore...');
       await db.collection('tokens').doc(userId as string).collection('providers').doc('youtube').set({
         accessToken: data.access_token,
         refreshToken: data.refresh_token,
@@ -287,6 +348,7 @@ async function startServer() {
         updatedAt: admin.firestore.FieldValue.serverTimestamp(),
       });
 
+      console.log('YouTube tokens stored successfully');
       res.send(`
         <html>
           <body>
@@ -304,7 +366,7 @@ async function startServer() {
       `);
     } catch (error) {
       console.error("YouTube callback error:", error);
-      res.status(500).send("Failed to connect YouTube");
+      res.status(500).send(`Failed to connect YouTube: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
   });
 
