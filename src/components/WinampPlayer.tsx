@@ -49,6 +49,7 @@ const WinampPlayer: React.FC = () => {
   const [isSpotifyConnecting, setIsSpotifyConnecting] = useState(false);
   const [spotifyAuthMessage, setSpotifyAuthMessage] = useState<string | null>(null);
   const [isYouTubeConnected, setIsYouTubeConnected] = useState(false);
+  const [isAppleMusicConnected, setIsAppleMusicConnected] = useState(false);
   const [isSettingsLoaded, setIsSettingsLoaded] = useState(false);
   const [popoutWindow, setPopoutWindow] = useState<Window | null>(null);
   const [isGeneratingRadio, setIsGeneratingRadio] = useState(false);
@@ -67,6 +68,16 @@ const WinampPlayer: React.FC = () => {
     { name: 'Retro Orange', color: '#ff8800' },
     { name: 'Vaporwave Purple', color: '#8800ff' },
     { name: 'Matrix Green', color: '#00aa00' },
+    { name: 'Sunset Red', color: '#ff4d4d' },
+    { name: 'Laser Yellow', color: '#ffe600' },
+    { name: 'Ice Blue', color: '#66ccff' },
+    { name: 'Midnight Indigo', color: '#4b5dff' },
+    { name: 'Neon Lime', color: '#b7ff00' },
+    { name: 'Hot Coral', color: '#ff5f87' },
+    { name: 'Electric Violet', color: '#b026ff' },
+    { name: 'Mint Glow', color: '#4dffb8' },
+    { name: 'Crimson Pulse', color: '#ff1744' },
+    { name: 'Deep Teal', color: '#00b3a4' },
   ];
 
   const audioContextRef = useRef<AudioContext | null>(null);
@@ -220,6 +231,7 @@ const WinampPlayer: React.FC = () => {
         const data = await res.json();
         setIsSpotifyConnected(data.spotify);
         setIsYouTubeConnected(data.youtube);
+        setIsAppleMusicConnected(Boolean(data.appleMusic));
       } catch (error) {
         console.error("Failed to check connection status:", error);
       }
@@ -239,6 +251,8 @@ const WinampPlayer: React.FC = () => {
         }
       } else if (event.data?.type === 'YOUTUBE_AUTH_SUCCESS') {
         setIsYouTubeConnected(true);
+      } else if (event.data?.type === 'APPLE_MUSIC_AUTH_SUCCESS') {
+        setIsAppleMusicConnected(true);
       }
     };
     window.addEventListener('message', handleMessage);
@@ -325,6 +339,29 @@ const WinampPlayer: React.FC = () => {
     } catch (error) {
       console.error('YouTube auth error:', error);
       alert(`YouTube connection failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  };
+
+  const connectAppleMusic = async () => {
+    if (!user) {
+      alert('Please login first');
+      return;
+    }
+    try {
+      const res = await fetch(`/api/auth/apple-music/url?userId=${user.uid}`);
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || 'Failed to get auth URL');
+      }
+      const { url } = data;
+      if (!url) throw new Error('No auth URL returned');
+      const authWindow = window.open(url, 'apple_music_auth', 'width=600,height=800');
+      if (!authWindow) {
+        throw new Error('Popup blocked. Please allow popups and try again.');
+      }
+    } catch (error) {
+      console.error('Apple Music auth error:', error);
+      alert(`Apple Music connection failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
   };
 
@@ -644,7 +681,7 @@ const WinampPlayer: React.FC = () => {
                     <ExternalLink size={8} />
                   </button>
                 </div>
-                <div className="flex gap-1 flex-wrap max-w-[60px]">
+                <div className="flex gap-1 flex-wrap max-w-[90px]">
                   {RETRO_PALETTE.map(p => (
                     <button 
                       key={p.color}
@@ -654,6 +691,16 @@ const WinampPlayer: React.FC = () => {
                       title={p.name}
                     />
                   ))}
+                </div>
+                <div className="flex items-center gap-1 mt-1 border-t border-[#333] pt-1">
+                  <span className="text-[6px] text-[#00ff00] uppercase">Custom</span>
+                  <input
+                    type="color"
+                    value={vizColor}
+                    onChange={(e) => setVizColor(e.target.value)}
+                    className="h-3 w-5 bg-transparent border border-[#333] p-0 cursor-pointer"
+                    title="Custom visualizer color"
+                  />
                 </div>
                 
                 {/* Fine-tuning controls */}
@@ -857,7 +904,7 @@ const WinampPlayer: React.FC = () => {
                     <div className="flex items-center justify-between bg-black border border-[#333] p-2">
                       <div className="flex items-center gap-2">
                         <div className={cn("w-2 h-2 rounded-full", isYouTubeConnected ? "bg-[#FF0000]" : "bg-[#444]")} />
-                        <span className="text-[10px] font-bold text-white">YOUTUBE</span>
+                        <span className="text-[10px] font-bold text-white">YOUTUBE MUSIC</span>
                       </div>
                       <button 
                         onClick={connectYouTube}
@@ -867,6 +914,21 @@ const WinampPlayer: React.FC = () => {
                         )}
                       >
                         {isYouTubeConnected ? 'CONNECTED' : 'CONNECT'}
+                      </button>
+                    </div>
+                    <div className="flex items-center justify-between bg-black border border-[#333] p-2">
+                      <div className="flex items-center gap-2">
+                        <div className={cn("w-2 h-2 rounded-full", isAppleMusicConnected ? "bg-[#FA233B]" : "bg-[#444]")} />
+                        <span className="text-[10px] font-bold text-white">APPLE MUSIC</span>
+                      </div>
+                      <button 
+                        onClick={connectAppleMusic}
+                        className={cn(
+                          "px-2 py-1 text-[8px] font-bold border",
+                          isAppleMusicConnected ? "border-[#FA233B] text-[#FA233B]" : "border-[#444] text-[#444] hover:border-[#00ff00] hover:text-[#00ff00]"
+                        )}
+                      >
+                        {isAppleMusicConnected ? 'CONNECTED' : 'CONNECT'}
                       </button>
                     </div>
                     {!user && (
@@ -1026,7 +1088,10 @@ const WinampPlayer: React.FC = () => {
               </button>
             )}
             {user && !isYouTubeConnected && (
-              <button onClick={connectYouTube} className="hover:underline text-[#FF0000]">CONNECT YOUTUBE</button>
+              <button onClick={connectYouTube} className="hover:underline text-[#FF0000]">CONNECT YT MUSIC</button>
+            )}
+            {user && !isAppleMusicConnected && (
+              <button onClick={connectAppleMusic} className="hover:underline text-[#FA233B]">CONNECT APPLE MUSIC</button>
             )}
             {!user ? (
               <button
