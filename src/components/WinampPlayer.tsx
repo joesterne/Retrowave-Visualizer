@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Play, Pause, SkipBack, SkipForward, Volume2, Search, Heart, Brain, Menu, X, ExternalLink, Radio } from 'lucide-react';
 
 declare global {
@@ -46,10 +46,14 @@ const WinampPlayer: React.FC = () => {
   const [isSearching, setIsSearching] = useState(false);
   const [isThinkingOpen, setIsThinkingOpen] = useState(false);
   const [isSpotifyConnected, setIsSpotifyConnected] = useState(false);
+  const [isSpotifyConnecting, setIsSpotifyConnecting] = useState(false);
+  const [spotifyAuthMessage, setSpotifyAuthMessage] = useState<string | null>(null);
   const [isYouTubeConnected, setIsYouTubeConnected] = useState(false);
+  const [isAppleMusicConnected, setIsAppleMusicConnected] = useState(false);
   const [isSettingsLoaded, setIsSettingsLoaded] = useState(false);
   const [popoutWindow, setPopoutWindow] = useState<Window | null>(null);
   const [isGeneratingRadio, setIsGeneratingRadio] = useState(false);
+  const [isGoogleAuthProcessing, setIsGoogleAuthProcessing] = useState(false);
   
   const SAMPLE_TRACKS: Track[] = [
     { id: '1', title: 'CYBERPUNK 2077', artist: 'HYPER', source: 'local', url: 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3' },
@@ -64,6 +68,16 @@ const WinampPlayer: React.FC = () => {
     { name: 'Retro Orange', color: '#ff8800' },
     { name: 'Vaporwave Purple', color: '#8800ff' },
     { name: 'Matrix Green', color: '#00aa00' },
+    { name: 'Sunset Red', color: '#ff4d4d' },
+    { name: 'Laser Yellow', color: '#ffe600' },
+    { name: 'Ice Blue', color: '#66ccff' },
+    { name: 'Midnight Indigo', color: '#4b5dff' },
+    { name: 'Neon Lime', color: '#b7ff00' },
+    { name: 'Hot Coral', color: '#ff5f87' },
+    { name: 'Electric Violet', color: '#b026ff' },
+    { name: 'Mint Glow', color: '#4dffb8' },
+    { name: 'Crimson Pulse', color: '#ff1744' },
+    { name: 'Deep Teal', color: '#00b3a4' },
   ];
 
   const audioContextRef = useRef<AudioContext | null>(null);
@@ -73,6 +87,7 @@ const WinampPlayer: React.FC = () => {
   const popoutWindowRef = useRef<Window | null>(null);
   const youtubePlayerRef = useRef<any>(null);
   const spotifyPlayerRef = useRef<any>(null);
+  const spotifyAuthPopupCheckRef = useRef<number | null>(null);
   const [spotifyToken, setSpotifyToken] = useState<string | null>(null);
   const [isSpotifyReady, setIsSpotifyReady] = useState(false);
   const [spotifyDeviceId, setSpotifyDeviceId] = useState<string | null>(null);
@@ -216,6 +231,7 @@ const WinampPlayer: React.FC = () => {
         const data = await res.json();
         setIsSpotifyConnected(data.spotify);
         setIsYouTubeConnected(data.youtube);
+        setIsAppleMusicConnected(Boolean(data.appleMusic));
       } catch (error) {
         console.error("Failed to check connection status:", error);
       }
@@ -227,8 +243,16 @@ const WinampPlayer: React.FC = () => {
     const handleMessage = (event: MessageEvent) => {
       if (event.data?.type === 'SPOTIFY_AUTH_SUCCESS') {
         setIsSpotifyConnected(true);
+        setIsSpotifyConnecting(false);
+        setSpotifyAuthMessage('Spotify connected successfully.');
+        if (spotifyAuthPopupCheckRef.current !== null) {
+          window.clearInterval(spotifyAuthPopupCheckRef.current);
+          spotifyAuthPopupCheckRef.current = null;
+        }
       } else if (event.data?.type === 'YOUTUBE_AUTH_SUCCESS') {
         setIsYouTubeConnected(true);
+      } else if (event.data?.type === 'APPLE_MUSIC_AUTH_SUCCESS') {
+        setIsAppleMusicConnected(true);
       }
     };
     window.addEventListener('message', handleMessage);
@@ -246,6 +270,8 @@ const WinampPlayer: React.FC = () => {
       alert('Please login first');
       return;
     }
+    setIsSpotifyConnecting(true);
+    setSpotifyAuthMessage(null);
     try {
       const res = await fetch(`/api/auth/spotify/url?userId=${user.uid}`);
       const data = await res.json();
@@ -254,12 +280,47 @@ const WinampPlayer: React.FC = () => {
       }
       const { url } = data;
       if (!url) throw new Error('No auth URL returned');
-      window.open(url, 'spotify_auth', 'width=600,height=800');
+      const authWindow = window.open(url, 'spotify_auth', 'width=600,height=800');
+      if (!authWindow) {
+        throw new Error('Popup blocked. Please allow popups and try again.');
+      }
+
+      spotifyAuthPopupCheckRef.current = window.setInterval(() => {
+        if (authWindow.closed) {
+          if (spotifyAuthPopupCheckRef.current !== null) {
+            window.clearInterval(spotifyAuthPopupCheckRef.current);
+            spotifyAuthPopupCheckRef.current = null;
+          }
+          setIsSpotifyConnecting(false);
+          if (!isSpotifyConnected) {
+            setSpotifyAuthMessage('Spotify connection window closed before completion.');
+          }
+        }
+      }, 500);
     } catch (error) {
+      setIsSpotifyConnecting(false);
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      setSpotifyAuthMessage(`Spotify connection failed: ${errorMessage}`);
       console.error('Spotify auth error:', error);
-      alert(`Spotify connection failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
   };
+
+  const handleGoogleAuthToggle = useCallback(async () => {
+    if (isGoogleAuthProcessing) return;
+
+    setIsGoogleAuthProcessing(true);
+    try {
+      if (user) {
+        await signOut();
+      } else {
+        await signIn();
+      }
+    } catch (error) {
+      console.error('Google auth action failed:', error);
+    } finally {
+      setIsGoogleAuthProcessing(false);
+    }
+  }, [isGoogleAuthProcessing, user, signIn, signOut]);
 
   const connectYouTube = async () => {
     if (!user) {
@@ -278,6 +339,29 @@ const WinampPlayer: React.FC = () => {
     } catch (error) {
       console.error('YouTube auth error:', error);
       alert(`YouTube connection failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  };
+
+  const connectAppleMusic = async () => {
+    if (!user) {
+      alert('Please login first');
+      return;
+    }
+    try {
+      const res = await fetch(`/api/auth/apple-music/url?userId=${user.uid}`);
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || 'Failed to get auth URL');
+      }
+      const { url } = data;
+      if (!url) throw new Error('No auth URL returned');
+      const authWindow = window.open(url, 'apple_music_auth', 'width=600,height=800');
+      if (!authWindow) {
+        throw new Error('Popup blocked. Please allow popups and try again.');
+      }
+    } catch (error) {
+      console.error('Apple Music auth error:', error);
+      alert(`Apple Music connection failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
   };
 
@@ -581,7 +665,7 @@ const WinampPlayer: React.FC = () => {
               <Visualizer analyser={analyserRef.current} mode={vizMode} color={vizColor} density={vizDensity} />
               <div className="absolute top-2 right-2 flex flex-col gap-2 opacity-0 group-hover:opacity-100 transition-opacity bg-black/50 p-1 rounded">
                 <div className="flex gap-1">
-                  {['spectrum', 'oscilloscope', 'circles', 'plasma'].map(m => (
+                  {['spectrum', 'oscilloscope', 'bars', 'circles', 'plasma', 'mirrorBars', 'radialPulse', 'waveDots'].map(m => (
                     <button 
                       key={m}
                       onClick={() => setVizMode(m as VisualizerMode)}
@@ -597,7 +681,7 @@ const WinampPlayer: React.FC = () => {
                     <ExternalLink size={8} />
                   </button>
                 </div>
-                <div className="flex gap-1 flex-wrap max-w-[60px]">
+                <div className="flex gap-1 flex-wrap max-w-[90px]">
                   {RETRO_PALETTE.map(p => (
                     <button 
                       key={p.color}
@@ -607,6 +691,16 @@ const WinampPlayer: React.FC = () => {
                       title={p.name}
                     />
                   ))}
+                </div>
+                <div className="flex items-center gap-1 mt-1 border-t border-[#333] pt-1">
+                  <span className="text-[6px] text-[#00ff00] uppercase">Custom</span>
+                  <input
+                    type="color"
+                    value={vizColor}
+                    onChange={(e) => setVizColor(e.target.value)}
+                    className="h-3 w-5 bg-transparent border border-[#333] p-0 cursor-pointer"
+                    title="Custom visualizer color"
+                  />
                 </div>
                 
                 {/* Fine-tuning controls */}
@@ -766,13 +860,17 @@ const WinampPlayer: React.FC = () => {
                         <span className="text-[10px] font-bold text-white">GOOGLE ACCOUNT</span>
                       </div>
                       <button 
-                        onClick={() => user ? signOut() : signIn().catch(e => console.error("Login failed:", e))}
+                        onClick={handleGoogleAuthToggle}
+                        disabled={isGoogleAuthProcessing}
                         className={cn(
                           "px-2 py-1 text-[8px] font-bold border",
-                          user ? "border-[#4285F4] text-[#4285F4] hover:text-[#ff0000] hover:border-[#ff0000]" : "border-[#444] text-[#444] hover:border-[#00ff00] hover:text-[#00ff00]"
+                          user
+                            ? "border-[#4285F4] text-[#4285F4] hover:text-[#ff0000] hover:border-[#ff0000]"
+                            : "border-[#444] text-[#444] hover:border-[#00ff00] hover:text-[#00ff00]",
+                          isGoogleAuthProcessing && "opacity-70 cursor-wait"
                         )}
                       >
-                        {user ? 'SIGN OUT' : 'LOGIN'}
+                        {isGoogleAuthProcessing ? 'PROCESSING...' : user ? 'SIGN OUT' : 'LOGIN'}
                       </button>
                     </div>
                     <div className="flex items-center justify-between bg-black border border-[#333] p-2">
@@ -782,18 +880,31 @@ const WinampPlayer: React.FC = () => {
                       </div>
                       <button 
                         onClick={connectSpotify}
+                        disabled={isSpotifyConnected || isSpotifyConnecting}
                         className={cn(
                           "px-2 py-1 text-[8px] font-bold border",
-                          isSpotifyConnected ? "border-[#1DB954] text-[#1DB954]" : "border-[#444] text-[#444] hover:border-[#00ff00] hover:text-[#00ff00]"
+                          isSpotifyConnected
+                            ? "border-[#1DB954] text-[#1DB954]"
+                            : isSpotifyConnecting
+                              ? "border-[#1DB954] text-[#1DB954] opacity-80 cursor-wait"
+                              : "border-[#444] text-[#444] hover:border-[#00ff00] hover:text-[#00ff00]"
                         )}
                       >
-                        {isSpotifyConnected ? 'CONNECTED' : 'CONNECT'}
+                        {isSpotifyConnected ? 'CONNECTED' : isSpotifyConnecting ? 'CONNECTING...' : 'CONNECT'}
                       </button>
                     </div>
+                    {spotifyAuthMessage && (
+                      <p className={cn(
+                        "text-[8px] text-center uppercase",
+                        spotifyAuthMessage.toLowerCase().includes('successfully') ? "text-[#1DB954]" : "text-[#ff8800]"
+                      )}>
+                        {spotifyAuthMessage}
+                      </p>
+                    )}
                     <div className="flex items-center justify-between bg-black border border-[#333] p-2">
                       <div className="flex items-center gap-2">
                         <div className={cn("w-2 h-2 rounded-full", isYouTubeConnected ? "bg-[#FF0000]" : "bg-[#444]")} />
-                        <span className="text-[10px] font-bold text-white">YOUTUBE</span>
+                        <span className="text-[10px] font-bold text-white">YOUTUBE MUSIC</span>
                       </div>
                       <button 
                         onClick={connectYouTube}
@@ -803,6 +914,21 @@ const WinampPlayer: React.FC = () => {
                         )}
                       >
                         {isYouTubeConnected ? 'CONNECTED' : 'CONNECT'}
+                      </button>
+                    </div>
+                    <div className="flex items-center justify-between bg-black border border-[#333] p-2">
+                      <div className="flex items-center gap-2">
+                        <div className={cn("w-2 h-2 rounded-full", isAppleMusicConnected ? "bg-[#FA233B]" : "bg-[#444]")} />
+                        <span className="text-[10px] font-bold text-white">APPLE MUSIC</span>
+                      </div>
+                      <button 
+                        onClick={connectAppleMusic}
+                        className={cn(
+                          "px-2 py-1 text-[8px] font-bold border",
+                          isAppleMusicConnected ? "border-[#FA233B] text-[#FA233B]" : "border-[#444] text-[#444] hover:border-[#00ff00] hover:text-[#00ff00]"
+                        )}
+                      >
+                        {isAppleMusicConnected ? 'CONNECTED' : 'CONNECT'}
                       </button>
                     </div>
                     {!user && (
@@ -953,15 +1079,36 @@ const WinampPlayer: React.FC = () => {
           </div>
           <div className="flex gap-2">
             {user && !isSpotifyConnected && (
-              <button onClick={connectSpotify} className="hover:underline text-[#1DB954]">CONNECT SPOTIFY</button>
+              <button
+                onClick={connectSpotify}
+                disabled={isSpotifyConnecting}
+                className={cn("hover:underline text-[#1DB954]", isSpotifyConnecting && "opacity-70 cursor-wait")}
+              >
+                {isSpotifyConnecting ? 'CONNECTING SPOTIFY...' : 'CONNECT SPOTIFY'}
+              </button>
             )}
             {user && !isYouTubeConnected && (
-              <button onClick={connectYouTube} className="hover:underline text-[#FF0000]">CONNECT YOUTUBE</button>
+              <button onClick={connectYouTube} className="hover:underline text-[#FF0000]">CONNECT YT MUSIC</button>
+            )}
+            {user && !isAppleMusicConnected && (
+              <button onClick={connectAppleMusic} className="hover:underline text-[#FA233B]">CONNECT APPLE MUSIC</button>
             )}
             {!user ? (
-              <button onClick={signIn} className="hover:underline">LOGIN</button>
+              <button
+                onClick={handleGoogleAuthToggle}
+                disabled={isGoogleAuthProcessing}
+                className={cn("hover:underline", isGoogleAuthProcessing && "opacity-70 cursor-wait")}
+              >
+                {isGoogleAuthProcessing ? 'LOGGING IN...' : 'LOGIN'}
+              </button>
             ) : (
-              <button onClick={signOut} className="hover:underline">LOGOUT</button>
+              <button
+                onClick={handleGoogleAuthToggle}
+                disabled={isGoogleAuthProcessing}
+                className={cn("hover:underline", isGoogleAuthProcessing && "opacity-70 cursor-wait")}
+              >
+                {isGoogleAuthProcessing ? 'LOGGING OUT...' : 'LOGOUT'}
+              </button>
             )}
           </div>
         </div>
