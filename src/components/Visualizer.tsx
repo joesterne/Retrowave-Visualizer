@@ -6,9 +6,10 @@ interface VisualizerProps {
   mode: VisualizerMode;
   color?: string;
   density?: number;
+  speed?: number;
 }
 
-const Visualizer: React.FC<VisualizerProps> = ({ analyser, mode, color = '#00ff00', density = 10 }) => {
+const Visualizer: React.FC<VisualizerProps> = ({ analyser, mode, color = '#00ff00', density = 10, speed = 1 }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
   useEffect(() => {
@@ -20,6 +21,17 @@ const Visualizer: React.FC<VisualizerProps> = ({ analyser, mode, color = '#00ff0
 
     let animationId: number;
     let dataArray = new Uint8Array(analyser.frequencyBinCount);
+    let lastDrawTime = 0;
+
+    const isBarMode = mode === 'spectrum' || mode === 'bars';
+    const isOscilloscopeMode = mode === 'oscilloscope';
+    const isCircleMode = mode === 'circles';
+    const isPlasmaMode = mode === 'plasma';
+    const isMirrorBarsMode = mode === 'mirrorBars';
+    const isRadialPulseMode = mode === 'radialPulse';
+    const isWaveDotsMode = mode === 'waveDots';
+
+    const alphaSuffixTable = Array.from({ length: 256 }, (_, i) => i.toString(16).padStart(2, '0'));
 
     const isBarMode = mode === 'spectrum' || mode === 'bars';
     const isOscilloscopeMode = mode === 'oscilloscope';
@@ -194,7 +206,7 @@ const Visualizer: React.FC<VisualizerProps> = ({ analyser, mode, color = '#00ff0
     return () => {
       cancelAnimationFrame(animationId);
     };
-  }, [analyser, mode, color, density]);
+  }, [analyser, mode, color, density, speed]);
 
   return (
     <canvas

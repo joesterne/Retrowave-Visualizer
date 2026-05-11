@@ -38,6 +38,7 @@ const WinampPlayer: React.FC = () => {
   const [vizColor, setVizColor] = useState('#00ff00');
   const [fftSize, setFftSize] = useState(256);
   const [vizDensity, setVizDensity] = useState(10);
+  const [vizSpeed, setVizSpeed] = useState(1);
   const [favorites, setFavorites] = useState<any[]>([]);
   const [showPlaylist, setShowPlaylist] = useState(false);
   const [playlistTab, setPlaylistTab] = useState<'search' | 'playlist' | 'connections'>('search');
@@ -111,23 +112,42 @@ const WinampPlayer: React.FC = () => {
         mode: vizMode,
         color: vizColor,
         density: vizDensity
+        ,
+        speed: vizSpeed
       }, '*');
       animationId = requestAnimationFrame(sendData);
     };
 
     sendData();
     return () => cancelAnimationFrame(animationId);
-  }, [popoutWindow, vizMode, vizColor, vizDensity]);
+  }, [popoutWindow, vizMode, vizColor, vizDensity, vizSpeed]);
 
   const togglePopout = () => {
     if (popoutWindow) {
       popoutWindow.close();
       setPopoutWindow(null);
     } else {
-      const win = window.open('/visualizer', 'WinampVisualizer', 'width=800,height=600');
+      const win = window.open(`${window.location.origin}/visualizer`, 'WinampVisualizer', 'width=1000,height=700');
+      if (!win) {
+        alert('Pop-out blocked. Please allow popups for this site.');
+        return;
+      }
+      win.focus();
       setPopoutWindow(win);
     }
   };
+
+  useEffect(() => {
+    if (!popoutWindow) return;
+
+    const timer = window.setInterval(() => {
+      if (popoutWindow.closed) {
+        setPopoutWindow(null);
+      }
+    }, 500);
+
+    return () => window.clearInterval(timer);
+  }, [popoutWindow]);
 
   useEffect(() => {
     // Load YouTube API
@@ -185,6 +205,7 @@ const WinampPlayer: React.FC = () => {
         if (data.vizColor !== undefined) setVizColor(data.vizColor);
         if (data.fftSize !== undefined) setFftSize(data.fftSize);
         if (data.vizDensity !== undefined) setVizDensity(data.vizDensity);
+        if (data.vizSpeed !== undefined) setVizSpeed(data.vizSpeed);
       }
       setIsSettingsLoaded(true);
     }, (error) => {
@@ -211,6 +232,7 @@ const WinampPlayer: React.FC = () => {
           vizColor,
           fftSize,
           vizDensity,
+          vizSpeed,
           updatedAt: serverTimestamp()
         }, { merge: true });
       } catch (error) {
@@ -220,7 +242,7 @@ const WinampPlayer: React.FC = () => {
 
     const timeoutId = setTimeout(saveSettings, 1000); // Debounce saves
     return () => clearTimeout(timeoutId);
-  }, [user, isSettingsLoaded, volume, vizMode, vizColor, fftSize, vizDensity]);
+  }, [user, isSettingsLoaded, volume, vizMode, vizColor, fftSize, vizDensity, vizSpeed]);
 
   // Check connection status
   useEffect(() => {
@@ -662,7 +684,7 @@ const WinampPlayer: React.FC = () => {
           <div className="flex gap-4 h-32">
             {/* Visualizer Section */}
             <div className="flex-1 relative group">
-              <Visualizer analyser={analyserRef.current} mode={vizMode} color={vizColor} density={vizDensity} />
+              <Visualizer analyser={analyserRef.current} mode={vizMode} color={vizColor} density={vizDensity} speed={vizSpeed} />
               <div className="absolute top-2 right-2 flex flex-col gap-2 opacity-0 group-hover:opacity-100 transition-opacity bg-black/50 p-1 rounded">
                 <div className="flex gap-1">
                   {['spectrum', 'oscilloscope', 'bars', 'circles', 'plasma', 'mirrorBars', 'radialPulse', 'waveDots'].map(m => (
@@ -733,6 +755,18 @@ const WinampPlayer: React.FC = () => {
                       />
                     </div>
                   )}
+                  <div className="flex flex-col gap-0.5">
+                    <span className="text-[6px] text-[#00ff00] uppercase">SPEED</span>
+                    <input 
+                      type="range"
+                      min="0.25"
+                      max="2"
+                      step="0.05"
+                      value={vizSpeed}
+                      onChange={(e) => setVizSpeed(parseFloat(e.target.value))}
+                      className="w-full accent-[#00ff00] h-1 bg-[#222] appearance-none cursor-pointer"
+                    />
+                  </div>
                 </div>
               </div>
             </div>
@@ -798,6 +832,9 @@ const WinampPlayer: React.FC = () => {
             </div>
 
             <div className="flex gap-1">
+              <RetroButton onClick={togglePopout} variant={popoutWindow ? 'primary' : 'secondary'}>
+                <ExternalLink size={12} />
+              </RetroButton>
               <RetroButton 
                 onClick={toggleFavorite} 
                 variant={favorites.find(f => f.externalId === currentTrack?.id) ? 'primary' : 'secondary'}
