@@ -33,12 +33,18 @@ const Visualizer: React.FC<VisualizerProps> = ({ analyser, mode, color = '#00ff0
 
     const alphaSuffixTable = Array.from({ length: 256 }, (_, i) => i.toString(16).padStart(2, '0'));
 
+    const isBarMode = mode === 'spectrum' || mode === 'bars';
+    const isOscilloscopeMode = mode === 'oscilloscope';
+    const isCircleMode = mode === 'circles';
+    const isPlasmaMode = mode === 'plasma';
+    const isMirrorBarsMode = mode === 'mirrorBars';
+    const isRadialPulseMode = mode === 'radialPulse';
+    const isWaveDotsMode = mode === 'waveDots';
+
+    const alphaSuffixTable = Array.from({ length: 256 }, (_, i) => i.toString(16).padStart(2, '0'));
+
     const draw = () => {
       animationId = requestAnimationFrame(draw);
-      const now = performance.now();
-      const frameInterval = 1000 / (60 * Math.max(0.25, speed));
-      if (now - lastDrawTime < frameInterval) return;
-      lastDrawTime = now;
 
       const width = canvas.width;
       const height = canvas.height;
