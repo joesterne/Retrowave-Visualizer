@@ -12,6 +12,7 @@ declare global {
 
 import { motion, AnimatePresence } from 'motion/react';
 import Visualizer from './Visualizer';
+import { DEFAULT_VISUALIZER_OPTIONS, VisualizerRenderOptions } from './visualizerRenderer';
 import RetroButton from './RetroButton';
 import { Track, VisualizerMode, Favorite } from '../types';
 import { db, handleFirestoreError, OperationType } from '../firebase';
@@ -39,6 +40,12 @@ const WinampPlayer: React.FC = () => {
   const [fftSize, setFftSize] = useState(256);
   const [vizDensity, setVizDensity] = useState(10);
   const [vizSpeed, setVizSpeed] = useState(1);
+  const [vizBackgroundColor, setVizBackgroundColor] = useState(DEFAULT_VISUALIZER_OPTIONS.backgroundColor);
+  const [vizGlow, setVizGlow] = useState(DEFAULT_VISUALIZER_OPTIONS.glow);
+  const [vizLineWidth, setVizLineWidth] = useState(DEFAULT_VISUALIZER_OPTIONS.lineWidth);
+  const [vizBarGap, setVizBarGap] = useState(DEFAULT_VISUALIZER_OPTIONS.barGap);
+  const [vizTrail, setVizTrail] = useState(DEFAULT_VISUALIZER_OPTIONS.trail);
+  const [vizMirrored, setVizMirrored] = useState(DEFAULT_VISUALIZER_OPTIONS.mirrored);
   const [favorites, setFavorites] = useState<any[]>([]);
   const [showPlaylist, setShowPlaylist] = useState(false);
   const [playlistTab, setPlaylistTab] = useState<'search' | 'playlist' | 'connections'>('search');
@@ -55,6 +62,38 @@ const WinampPlayer: React.FC = () => {
   const [popoutWindow, setPopoutWindow] = useState<Window | null>(null);
   const [isGeneratingRadio, setIsGeneratingRadio] = useState(false);
   const [isGoogleAuthProcessing, setIsGoogleAuthProcessing] = useState(false);
+
+  const visualizerSettings: VisualizerRenderOptions = {
+    mode: vizMode,
+    color: vizColor,
+    density: vizDensity,
+    speed: vizSpeed,
+    backgroundColor: vizBackgroundColor,
+    glow: vizGlow,
+    lineWidth: vizLineWidth,
+    barGap: vizBarGap,
+    trail: vizTrail,
+    mirrored: vizMirrored,
+  };
+
+  const applyVisualizerSettings = (settings: Partial<VisualizerRenderOptions>) => {
+    if (settings.mode) setVizMode(settings.mode);
+    if (settings.color) setVizColor(settings.color);
+    if (settings.density !== undefined) setVizDensity(settings.density);
+    if (settings.speed !== undefined) setVizSpeed(settings.speed);
+    if (settings.backgroundColor) setVizBackgroundColor(settings.backgroundColor);
+    if (settings.glow !== undefined) setVizGlow(settings.glow);
+    if (settings.lineWidth !== undefined) setVizLineWidth(settings.lineWidth);
+    if (settings.barGap !== undefined) setVizBarGap(settings.barGap);
+    if (settings.trail !== undefined) setVizTrail(settings.trail);
+    if (settings.mirrored !== undefined) setVizMirrored(settings.mirrored);
+  };
+
+  const visualizerPresets = [
+    { name: 'Classic CRT', settings: DEFAULT_VISUALIZER_OPTIONS },
+    { name: 'Vapor Trail', settings: { ...DEFAULT_VISUALIZER_OPTIONS, color: '#ff00ff', backgroundColor: '#080010', glow: 0.75, trail: 0.55, mode: 'waveDots' as VisualizerMode } },
+    { name: 'Laser Grid', settings: { ...DEFAULT_VISUALIZER_OPTIONS, color: '#00ffff', glow: 0.9, density: 28, barGap: 2, mode: 'mirrorBars' as VisualizerMode } },
+  ];
   
   const SAMPLE_TRACKS: Track[] = [
     { id: '1', title: 'CYBERPUNK 2077', artist: 'HYPER', source: 'local', url: 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3' },
@@ -105,22 +144,24 @@ const WinampPlayer: React.FC = () => {
         setPopoutWindow(null);
         return;
       }
-      analyserRef.current?.getByteFrequencyData(dataArray);
+      if (vizMode === 'oscilloscope' || vizMode === 'waveDots') {
+        analyserRef.current?.getByteTimeDomainData(dataArray);
+      } else {
+        analyserRef.current?.getByteFrequencyData(dataArray);
+      }
       popoutWindow.postMessage({
         type: 'VIZ_DATA',
         data: dataArray,
         mode: vizMode,
         color: vizColor,
-        density: vizDensity
-        ,
-        speed: vizSpeed
-      }, '*');
+        settings: visualizerSettings
+      }, window.location.origin);
       animationId = requestAnimationFrame(sendData);
     };
 
     sendData();
     return () => cancelAnimationFrame(animationId);
-  }, [popoutWindow, vizMode, vizColor, vizDensity, vizSpeed]);
+  }, [popoutWindow, vizMode, vizColor, vizDensity, vizSpeed, vizBackgroundColor, vizGlow, vizLineWidth, vizBarGap, vizTrail, vizMirrored]);
 
   const togglePopout = () => {
     if (popoutWindow) {
@@ -136,6 +177,16 @@ const WinampPlayer: React.FC = () => {
       setPopoutWindow(win);
     }
   };
+
+  useEffect(() => {
+    const handlePopoutSettings = (event: MessageEvent) => {
+      if (event.origin !== window.location.origin || event.data?.type !== 'VIZ_SETTINGS_CHANGED') return;
+      applyVisualizerSettings(event.data.settings ?? {});
+    };
+
+    window.addEventListener('message', handlePopoutSettings);
+    return () => window.removeEventListener('message', handlePopoutSettings);
+  }, []);
 
   useEffect(() => {
     if (!popoutWindow) return;
@@ -171,9 +222,29 @@ const WinampPlayer: React.FC = () => {
   }, []);
 
   useEffect(() => {
+    if (user) return;
+    const saved = window.localStorage.getItem('retrowave-settings');
+    if (saved) {
+      const data = JSON.parse(saved);
+      if (data.volume !== undefined) setVolume(data.volume);
+      if (data.fftSize !== undefined) setFftSize(data.fftSize);
+      applyVisualizerSettings(data.visualizer ?? {});
+    }
+    setIsSettingsLoaded(true);
+  }, [user]);
+
+  useEffect(() => {
+    if (user || !isSettingsLoaded) return;
+    window.localStorage.setItem('retrowave-settings', JSON.stringify({
+      volume,
+      fftSize,
+      visualizer: visualizerSettings,
+    }));
+  }, [user, isSettingsLoaded, volume, fftSize, vizMode, vizColor, vizDensity, vizSpeed, vizBackgroundColor, vizGlow, vizLineWidth, vizBarGap, vizTrail, vizMirrored]);
+
+  useEffect(() => {
     if (!user) {
       setFavorites([]);
-      setIsSettingsLoaded(false);
       return;
     }
 
@@ -206,6 +277,12 @@ const WinampPlayer: React.FC = () => {
         if (data.fftSize !== undefined) setFftSize(data.fftSize);
         if (data.vizDensity !== undefined) setVizDensity(data.vizDensity);
         if (data.vizSpeed !== undefined) setVizSpeed(data.vizSpeed);
+        if (data.vizBackgroundColor !== undefined) setVizBackgroundColor(data.vizBackgroundColor);
+        if (data.vizGlow !== undefined) setVizGlow(data.vizGlow);
+        if (data.vizLineWidth !== undefined) setVizLineWidth(data.vizLineWidth);
+        if (data.vizBarGap !== undefined) setVizBarGap(data.vizBarGap);
+        if (data.vizTrail !== undefined) setVizTrail(data.vizTrail);
+        if (data.vizMirrored !== undefined) setVizMirrored(data.vizMirrored);
       }
       setIsSettingsLoaded(true);
     }, (error) => {
@@ -233,6 +310,12 @@ const WinampPlayer: React.FC = () => {
           fftSize,
           vizDensity,
           vizSpeed,
+          vizBackgroundColor,
+          vizGlow,
+          vizLineWidth,
+          vizBarGap,
+          vizTrail,
+          vizMirrored,
           updatedAt: serverTimestamp()
         }, { merge: true });
       } catch (error) {
@@ -242,7 +325,7 @@ const WinampPlayer: React.FC = () => {
 
     const timeoutId = setTimeout(saveSettings, 1000); // Debounce saves
     return () => clearTimeout(timeoutId);
-  }, [user, isSettingsLoaded, volume, vizMode, vizColor, fftSize, vizDensity, vizSpeed]);
+  }, [user, isSettingsLoaded, volume, vizMode, vizColor, fftSize, vizDensity, vizSpeed, vizBackgroundColor, vizGlow, vizLineWidth, vizBarGap, vizTrail, vizMirrored]);
 
   // Check connection status
   useEffect(() => {
@@ -660,12 +743,12 @@ const WinampPlayer: React.FC = () => {
   };
 
   return (
-    <div className="flex flex-col items-center justify-center min-h-screen bg-[#111] text-[#00ff00] font-mono p-4">
+    <div className="flex flex-col items-center justify-center min-h-screen bg-[#111] text-[#00ff00] font-mono p-4 lg:p-8">
       {/* Hidden YouTube Player */}
       <div id="youtube-player" style={{ display: 'none' }}></div>
 
       {/* Main Player Window */}
-      <div className="w-full max-w-md bg-[#222] border-4 border-[#444] shadow-[8px_8px_0px_rgba(0,0,0,0.8)] overflow-hidden">
+      <div className="w-full max-w-md lg:max-w-5xl bg-[#222] border-4 border-[#444] shadow-[8px_8px_0px_rgba(0,0,0,0.8)] overflow-hidden">
         {/* Title Bar */}
         <div className="flex items-center justify-between bg-gradient-to-r from-[#000080] to-[#1084d0] px-2 py-1 text-white text-xs font-bold select-none">
           <div className="flex items-center gap-2">
@@ -680,11 +763,11 @@ const WinampPlayer: React.FC = () => {
         </div>
 
         {/* Display Area */}
-        <div className="p-4 flex flex-col gap-4">
-          <div className="flex gap-4 h-32">
+        <div className="p-4 grid gap-4 lg:grid-cols-[minmax(0,1fr)_280px]">
+          <div className="flex gap-4 h-40 lg:h-80 lg:col-span-1">
             {/* Visualizer Section */}
             <div className="flex-1 relative group">
-              <Visualizer analyser={analyserRef.current} mode={vizMode} color={vizColor} density={vizDensity} speed={vizSpeed} />
+              <Visualizer analyser={analyserRef.current} mode={vizMode} color={vizColor} density={vizDensity} speed={vizSpeed} backgroundColor={vizBackgroundColor} glow={vizGlow} lineWidth={vizLineWidth} barGap={vizBarGap} trail={vizTrail} mirrored={vizMirrored} />
               <div className="absolute top-2 right-2 flex flex-col gap-2 opacity-0 group-hover:opacity-100 transition-opacity bg-black/50 p-1 rounded">
                 <div className="flex gap-1">
                   {['spectrum', 'oscilloscope', 'bars', 'circles', 'plasma', 'mirrorBars', 'radialPulse', 'waveDots'].map(m => (
@@ -804,8 +887,48 @@ const WinampPlayer: React.FC = () => {
             </div>
           </div>
 
+          <div className="hidden lg:flex flex-col gap-3 bg-black border border-[#333] p-3 text-[10px]">
+            <div className="flex items-center justify-between border-b border-[#333] pb-2">
+              <span className="font-bold text-white">VISUALIZER SETTINGS</span>
+              <button onClick={togglePopout} className="text-[#00ff00] hover:text-white">POP OUT</button>
+            </div>
+            <label className="flex flex-col gap-1">
+              <span>MODE</span>
+              <select value={vizMode} onChange={(e) => setVizMode(e.target.value as VisualizerMode)} className="bg-black border border-[#00ff00] px-2 py-1">
+                {['spectrum', 'oscilloscope', 'bars', 'circles', 'plasma', 'mirrorBars', 'radialPulse', 'waveDots'].map((mode) => <option key={mode} value={mode}>{mode}</option>)}
+              </select>
+            </label>
+            <div className="grid grid-cols-4 gap-2">
+              {RETRO_PALETTE.map((paletteColor) => (
+                <button key={paletteColor.color} onClick={() => setVizColor(paletteColor.color)} className={cn("h-7 border", vizColor === paletteColor.color ? "border-white" : "border-[#333]")} style={{ backgroundColor: paletteColor.color }} title={paletteColor.name} />
+              ))}
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <label className="flex flex-col gap-1"><span>COLOR</span><input type="color" value={vizColor} onChange={(e) => setVizColor(e.target.value)} className="h-8 w-full bg-black" /></label>
+              <label className="flex flex-col gap-1"><span>BACKGROUND</span><input type="color" value={vizBackgroundColor} onChange={(e) => setVizBackgroundColor(e.target.value)} className="h-8 w-full bg-black" /></label>
+            </div>
+            <div className="grid grid-cols-3 gap-2">
+              {visualizerPresets.map((preset) => <button key={preset.name} onClick={() => applyVisualizerSettings(preset.settings)} className="border border-[#333] px-2 py-1 hover:border-[#00ff00]">{preset.name}</button>)}
+            </div>
+            {[
+              ['FFT', Math.log2(fftSize), 5, 12, 1, (value: number) => setFftSize(Math.pow(2, value))],
+              ['DENSITY', vizDensity, 1, 64, 1, setVizDensity],
+              ['SPEED', vizSpeed, 0.25, 2, 0.05, setVizSpeed],
+              ['GLOW', vizGlow, 0, 1, 0.05, setVizGlow],
+              ['LINE WIDTH', vizLineWidth, 1, 8, 0.5, setVizLineWidth],
+              ['BAR GAP', vizBarGap, 0, 8, 0.5, setVizBarGap],
+              ['TRAIL', vizTrail, 0, 0.9, 0.05, setVizTrail],
+            ].map(([label, value, min, max, step, setter]) => (
+              <label key={label as string} className="flex flex-col gap-1">
+                <span>{String(label)} ({Number(value).toFixed(Number(step) < 1 ? 2 : 0)})</span>
+                <input type="range" min={min as number} max={max as number} step={step as number} value={value as number} onChange={(e) => (setter as (value: number) => void)(Number(e.target.value))} className="accent-[#00ff00]" />
+              </label>
+            ))}
+            <label className="flex items-center gap-2"><input type="checkbox" checked={vizMirrored} onChange={(e) => setVizMirrored(e.target.checked)} /><span>MIRROR SPECTRUM</span></label>
+          </div>
+
           {/* Controls */}
-          <div className="flex items-center justify-between gap-2">
+          <div className="flex items-center justify-between gap-2 lg:col-span-2">
             <div className="flex gap-1">
               <RetroButton onClick={() => {}}><SkipBack size={12} /></RetroButton>
               <RetroButton onClick={togglePlay}>

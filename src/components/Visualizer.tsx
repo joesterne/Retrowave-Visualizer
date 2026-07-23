@@ -1,5 +1,6 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useMemo, useRef } from 'react';
 import { VisualizerMode } from '../types';
+import { DEFAULT_VISUALIZER_OPTIONS, drawVisualizerFrame } from './visualizerRenderer';
 
 interface VisualizerProps {
   analyser: AnalyserNode | null;
@@ -7,10 +8,69 @@ interface VisualizerProps {
   color?: string;
   density?: number;
   speed?: number;
+  backgroundColor?: string;
+  glow?: number;
+  lineWidth?: number;
+  barGap?: number;
+  trail?: number;
+  mirrored?: boolean;
 }
 
-const Visualizer: React.FC<VisualizerProps> = ({ analyser, mode, color = '#00ff00', density = 10, speed = 1 }) => {
+const Visualizer: React.FC<VisualizerProps> = ({
+  analyser,
+  mode,
+  color = DEFAULT_VISUALIZER_OPTIONS.color,
+  density = DEFAULT_VISUALIZER_OPTIONS.density,
+  speed = DEFAULT_VISUALIZER_OPTIONS.speed,
+  backgroundColor = DEFAULT_VISUALIZER_OPTIONS.backgroundColor,
+  glow = DEFAULT_VISUALIZER_OPTIONS.glow,
+  lineWidth = DEFAULT_VISUALIZER_OPTIONS.lineWidth,
+  barGap = DEFAULT_VISUALIZER_OPTIONS.barGap,
+  trail = DEFAULT_VISUALIZER_OPTIONS.trail,
+  mirrored = DEFAULT_VISUALIZER_OPTIONS.mirrored,
+}) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const canvasSizeRef = useRef({ width: 0, height: 0 });
+
+  const options = useMemo(() => ({
+    mode,
+    color,
+    density,
+    speed,
+    backgroundColor,
+    glow,
+    lineWidth,
+    barGap,
+    trail,
+    mirrored,
+  }), [mode, color, density, speed, backgroundColor, glow, lineWidth, barGap, trail, mirrored]);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+
+    const resize = () => {
+      const rect = canvas.getBoundingClientRect();
+      const dpr = window.devicePixelRatio || 1;
+      const width = Math.max(1, Math.floor(rect.width * dpr));
+      const height = Math.max(1, Math.floor(rect.height * dpr));
+      if (canvas.width !== width || canvas.height !== height) {
+        canvas.width = width;
+        canvas.height = height;
+        canvasSizeRef.current = { width, height };
+      }
+    };
+
+    resize();
+    const observer = new ResizeObserver(resize);
+    observer.observe(canvas);
+    window.addEventListener('resize', resize);
+
+    return () => {
+      observer.disconnect();
+      window.removeEventListener('resize', resize);
+    };
+  }, []);
 
   useEffect(() => {
     if (!analyser || !canvasRef.current) return;
@@ -23,197 +83,32 @@ const Visualizer: React.FC<VisualizerProps> = ({ analyser, mode, color = '#00ff0
     let dataArray = new Uint8Array(analyser.frequencyBinCount);
     let lastDrawTime = 0;
 
-    const isBarMode = mode === 'spectrum' || mode === 'bars';
-    const isOscilloscopeMode = mode === 'oscilloscope';
-    const isCircleMode = mode === 'circles';
-    const isPlasmaMode = mode === 'plasma';
-    const isMirrorBarsMode = mode === 'mirrorBars';
-    const isRadialPulseMode = mode === 'radialPulse';
-    const isWaveDotsMode = mode === 'waveDots';
-
-    const alphaSuffixTable = Array.from({ length: 256 }, (_, i) => i.toString(16).padStart(2, '0'));
-
-    const isBarMode = mode === 'spectrum' || mode === 'bars';
-    const isOscilloscopeMode = mode === 'oscilloscope';
-    const isCircleMode = mode === 'circles';
-    const isPlasmaMode = mode === 'plasma';
-    const isMirrorBarsMode = mode === 'mirrorBars';
-    const isRadialPulseMode = mode === 'radialPulse';
-    const isWaveDotsMode = mode === 'waveDots';
-
-    const alphaSuffixTable = Array.from({ length: 256 }, (_, i) => i.toString(16).padStart(2, '0'));
-
-    const draw = () => {
+    const draw = (time: number) => {
       animationId = requestAnimationFrame(draw);
+      const frameInterval = 1000 / (30 + options.speed * 30);
+      if (time - lastDrawTime < frameInterval) return;
+      lastDrawTime = time;
 
-      const width = canvas.width;
-      const height = canvas.height;
       const bufferLength = analyser.frequencyBinCount;
+      if (dataArray.length !== bufferLength) dataArray = new Uint8Array(bufferLength);
 
-      if (dataArray.length !== bufferLength) {
-        dataArray = new Uint8Array(bufferLength);
-      }
-
-      ctx.clearRect(0, 0, width, height);
-
-      if (isBarMode) {
-        analyser.getByteFrequencyData(dataArray);
-
-        const barWidth = (width / bufferLength) * 2.5;
-        const step = barWidth + 1;
-        let x = 0;
-
-        ctx.fillStyle = color;
-        for (let i = 0; i < bufferLength && x < width; i++) {
-          const barHeight = (dataArray[i] / 255) * height;
-          ctx.fillRect(x, height - barHeight, barWidth, barHeight);
-          x += step;
-        }
-        return;
-      }
-
-      if (isOscilloscopeMode) {
+      if (options.mode === 'oscilloscope' || options.mode === 'waveDots') {
         analyser.getByteTimeDomainData(dataArray);
-
-        ctx.lineWidth = 2;
-        ctx.strokeStyle = color;
-        ctx.beginPath();
-
-        const sliceWidth = width / bufferLength;
-        let x = 0;
-
-        for (let i = 0; i < bufferLength; i++) {
-          const y = ((dataArray[i] / 128) * height) / 2;
-          if (i === 0) {
-            ctx.moveTo(x, y);
-          } else {
-            ctx.lineTo(x, y);
-          }
-          x += sliceWidth;
-        }
-
-        ctx.lineTo(width, height / 2);
-        ctx.stroke();
-        return;
-      }
-
-      if (isCircleMode) {
+      } else {
         analyser.getByteFrequencyData(dataArray);
-
-        const centerX = width / 2;
-        const centerY = height / 2;
-        const maxRadius = Math.min(width, height) / 2;
-        const step = Math.max(1, Math.floor(100 / density));
-
-        for (let i = 0; i < bufferLength; i += step) {
-          const value = dataArray[i];
-          const radius = (value / 255) * maxRadius;
-          ctx.beginPath();
-          ctx.arc(centerX, centerY, radius, 0, 2 * Math.PI);
-          ctx.strokeStyle = `${color}${alphaSuffixTable[value]}`;
-          ctx.stroke();
-        }
-        return;
       }
 
-      if (isPlasmaMode) {
-        analyser.getByteFrequencyData(dataArray);
-
-        let sum = 0;
-        for (let i = 0; i < bufferLength; i++) {
-          sum += dataArray[i];
-        }
-        const avg = sum / bufferLength;
-
-        const gradient = ctx.createRadialGradient(
-          width / 2,
-          height / 2,
-          0,
-          width / 2,
-          height / 2,
-          (avg / 255) * width,
-        );
-        gradient.addColorStop(0, color);
-        gradient.addColorStop(1, 'transparent');
-        ctx.fillStyle = gradient;
-        ctx.fillRect(0, 0, width, height);
-        return;
-      }
-
-      if (isMirrorBarsMode) {
-        analyser.getByteFrequencyData(dataArray);
-        const halfHeight = height / 2;
-        const barWidth = Math.max(1, width / bufferLength);
-        let x = 0;
-
-        ctx.fillStyle = color;
-        for (let i = 0; i < bufferLength && x < width; i++) {
-          const amplitude = (dataArray[i] / 255) * halfHeight;
-          ctx.fillRect(x, halfHeight - amplitude, barWidth, amplitude);
-          ctx.fillRect(x, halfHeight, barWidth, amplitude);
-          x += barWidth;
-        }
-        return;
-      }
-
-      if (isRadialPulseMode) {
-        analyser.getByteFrequencyData(dataArray);
-        const centerX = width / 2;
-        const centerY = height / 2;
-        const baseRadius = Math.min(width, height) * 0.18;
-        const step = Math.max(4, Math.floor(bufferLength / 96));
-
-        ctx.strokeStyle = color;
-        ctx.lineWidth = 1.5;
-        ctx.beginPath();
-
-        for (let i = 0; i < bufferLength; i += step) {
-          const angle = (i / bufferLength) * Math.PI * 2;
-          const pulse = (dataArray[i] / 255) * (Math.min(width, height) * 0.3);
-          const radius = baseRadius + pulse;
-          const x = centerX + Math.cos(angle) * radius;
-          const y = centerY + Math.sin(angle) * radius;
-          if (i === 0) ctx.moveTo(x, y);
-          else ctx.lineTo(x, y);
-        }
-
-        ctx.closePath();
-        ctx.stroke();
-        return;
-      }
-
-      if (isWaveDotsMode) {
-        analyser.getByteTimeDomainData(dataArray);
-        const step = Math.max(2, Math.floor(bufferLength / 100));
-        const spacing = width / Math.ceil(bufferLength / step);
-        let x = 0;
-
-        ctx.fillStyle = color;
-        for (let i = 0; i < bufferLength; i += step) {
-          const normalized = (dataArray[i] - 128) / 128;
-          const y = height / 2 + normalized * (height * 0.35);
-          const radius = 1 + Math.abs(normalized) * 3;
-          ctx.beginPath();
-          ctx.arc(x, y, radius, 0, Math.PI * 2);
-          ctx.fill();
-          x += spacing;
-        }
-      }
+      drawVisualizerFrame(ctx, dataArray, options);
     };
 
-    draw();
-
-    return () => {
-      cancelAnimationFrame(animationId);
-    };
-  }, [analyser, mode, color, density, speed]);
+    animationId = requestAnimationFrame(draw);
+    return () => cancelAnimationFrame(animationId);
+  }, [analyser, options]);
 
   return (
     <canvas
       ref={canvasRef}
-      className="w-full h-full bg-black border-2 border-[#333] shadow-[inset_0_0_10px_rgba(0,255,0,0.2)]"
-      width={600}
-      height={300}
+      className="h-full w-full bg-black border-2 border-[#333] shadow-[inset_0_0_10px_rgba(0,255,0,0.2)]"
     />
   );
 };
