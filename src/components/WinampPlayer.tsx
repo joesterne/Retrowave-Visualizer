@@ -248,6 +248,8 @@ const WinampPlayer: React.FC = () => {
       return;
     }
 
+    setIsSettingsLoaded(false);
+
     // Load Favorites
     const favPath = 'favorites';
     const q = query(collection(db, favPath), where('uid', '==', user.uid));
