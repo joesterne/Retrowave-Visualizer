@@ -1,39 +1,65 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { VisualizerMode } from '../types';
 import { DEFAULT_VISUALIZER_OPTIONS, VisualizerRenderOptions, drawVisualizerFrame } from './visualizerRenderer';
 
 const modes: VisualizerMode[] = ['spectrum', 'oscilloscope', 'bars', 'circles', 'plasma', 'mirrorBars', 'radialPulse', 'waveDots'];
 
+type NumericVisualizerKey = 'density' | 'speed' | 'glow' | 'lineWidth' | 'barGap' | 'trail';
+
+const rangeControls: Array<[string, NumericVisualizerKey, number, number, number]> = [
+  ['Density', 'density', 1, 64, 1],
+  ['Speed', 'speed', 0.25, 2, 0.05],
+  ['Glow', 'glow', 0, 1, 0.05],
+  ['Line', 'lineWidth', 1, 8, 0.5],
+  ['Gap', 'barGap', 0, 8, 0.5],
+  ['Trail', 'trail', 0, 0.9, 0.05],
+];
+
+const areSettingsEqual = (a: VisualizerRenderOptions, b: VisualizerRenderOptions) => (
+  a.mode === b.mode
+  && a.color === b.color
+  && a.backgroundColor === b.backgroundColor
+  && a.density === b.density
+  && a.speed === b.speed
+  && a.glow === b.glow
+  && a.lineWidth === b.lineWidth
+  && a.barGap === b.barGap
+  && a.trail === b.trail
+  && a.mirrored === b.mirrored
+);
+
 const VisualizerWindow: React.FC = () => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const settingsRef = useRef<VisualizerRenderOptions>(DEFAULT_VISUALIZER_OPTIONS);
   const [settings, setSettings] = useState<VisualizerRenderOptions>(DEFAULT_VISUALIZER_OPTIONS);
   const [isSettingsOpen, setIsSettingsOpen] = useState(true);
 
-  const updateSettings = (patch: Partial<VisualizerRenderOptions>) => {
-    setSettings((prev) => {
-      const next = { ...prev, ...patch };
-      window.opener?.postMessage({ type: 'VIZ_SETTINGS_CHANGED', settings: next }, window.location.origin);
-      return next;
-    });
-  };
+  const commitSettings = useCallback((next: VisualizerRenderOptions) => {
+    settingsRef.current = next;
+    setSettings((prev) => (areSettingsEqual(prev, next) ? prev : next));
+  }, []);
 
-  const controlColor = settings.color;
-  const canvasOptions = useMemo(() => settings, [settings]);
+  const updateSettings = useCallback((patch: Partial<VisualizerRenderOptions>) => {
+    const next = { ...settingsRef.current, ...patch };
+    commitSettings(next);
+    window.opener?.postMessage({ type: 'VIZ_SETTINGS_CHANGED', settings: next }, window.location.origin);
+  }, [commitSettings]);
 
   useEffect(() => {
     const handleMessage = (event: MessageEvent) => {
       if (event.origin !== window.location.origin || event.data?.type !== 'VIZ_DATA') return;
       const { data, settings: incomingSettings } = event.data;
-      if (incomingSettings) setSettings((prev) => ({ ...prev, ...incomingSettings }));
-      const canvas = canvasRef.current;
-      const ctx = canvas?.getContext('2d');
-      if (!canvas || !ctx || !data) return;
-      drawVisualizerFrame(ctx, data, { ...canvasOptions, ...incomingSettings });
+      const nextSettings = incomingSettings ? { ...settingsRef.current, ...incomingSettings } : settingsRef.current;
+      if (incomingSettings) commitSettings(nextSettings);
+
+      const ctx = canvasRef.current?.getContext('2d');
+      if (!ctx || !data) return;
+      drawVisualizerFrame(ctx, data, nextSettings);
     };
 
     window.addEventListener('message', handleMessage);
     return () => window.removeEventListener('message', handleMessage);
-  }, [canvasOptions]);
+  }, [commitSettings]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -41,8 +67,12 @@ const VisualizerWindow: React.FC = () => {
 
     const resize = () => {
       const dpr = window.devicePixelRatio || 1;
-      canvas.width = Math.max(1, Math.floor(window.innerWidth * dpr));
-      canvas.height = Math.max(1, Math.floor(window.innerHeight * dpr));
+      const width = Math.max(1, Math.floor(window.innerWidth * dpr));
+      const height = Math.max(1, Math.floor(window.innerHeight * dpr));
+      if (canvas.width !== width || canvas.height !== height) {
+        canvas.width = width;
+        canvas.height = height;
+      }
     };
     window.addEventListener('resize', resize);
     resize();
@@ -72,19 +102,12 @@ const VisualizerWindow: React.FC = () => {
                 {modes.map((m) => <option key={m} value={m}>{m}</option>)}
               </select>
             </label>
-            <label className="flex items-center justify-between gap-2"><span>Color</span><input type="color" value={controlColor} onChange={(e) => updateSettings({ color: e.target.value })} /></label>
+            <label className="flex items-center justify-between gap-2"><span>Color</span><input type="color" value={settings.color} onChange={(e) => updateSettings({ color: e.target.value })} /></label>
             <label className="flex items-center justify-between gap-2"><span>BG</span><input type="color" value={settings.backgroundColor} onChange={(e) => updateSettings({ backgroundColor: e.target.value })} /></label>
-            {[
-              ['Density', 'density', 1, 64, 1, settings.density],
-              ['Speed', 'speed', 0.25, 2, 0.05, settings.speed],
-              ['Glow', 'glow', 0, 1, 0.05, settings.glow],
-              ['Line', 'lineWidth', 1, 8, 0.5, settings.lineWidth],
-              ['Gap', 'barGap', 0, 8, 0.5, settings.barGap],
-              ['Trail', 'trail', 0, 0.9, 0.05, settings.trail],
-            ].map(([label, key, min, max, step, value]) => (
-              <label key={key as string} className="flex flex-col gap-1">
-                <span>{label} ({Number(value).toFixed(Number(step) < 1 ? 2 : 0)})</span>
-                <input type="range" min={min as number} max={max as number} step={step as number} value={value as number} onChange={(e) => updateSettings({ [key as keyof VisualizerRenderOptions]: Number(e.target.value) } as Partial<VisualizerRenderOptions>)} />
+            {rangeControls.map(([label, key, min, max, step]) => (
+              <label key={key} className="flex flex-col gap-1">
+                <span>{label} ({settings[key].toFixed(step < 1 ? 2 : 0)})</span>
+                <input type="range" min={min} max={max} step={step} value={settings[key]} onChange={(e) => updateSettings({ [key]: Number(e.target.value) })} />
               </label>
             ))}
             <label className="col-span-2 flex items-center gap-2">

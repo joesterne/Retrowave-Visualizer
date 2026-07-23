@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { Play, Pause, SkipBack, SkipForward, Volume2, Search, Heart, Brain, Menu, X, ExternalLink, Radio } from 'lucide-react';
 
 declare global {
@@ -63,7 +63,7 @@ const WinampPlayer: React.FC = () => {
   const [isGeneratingRadio, setIsGeneratingRadio] = useState(false);
   const [isGoogleAuthProcessing, setIsGoogleAuthProcessing] = useState(false);
 
-  const visualizerSettings: VisualizerRenderOptions = {
+  const visualizerSettings: VisualizerRenderOptions = useMemo(() => ({
     mode: vizMode,
     color: vizColor,
     density: vizDensity,
@@ -74,9 +74,9 @@ const WinampPlayer: React.FC = () => {
     barGap: vizBarGap,
     trail: vizTrail,
     mirrored: vizMirrored,
-  };
+  }), [vizMode, vizColor, vizDensity, vizSpeed, vizBackgroundColor, vizGlow, vizLineWidth, vizBarGap, vizTrail, vizMirrored]);
 
-  const applyVisualizerSettings = (settings: Partial<VisualizerRenderOptions>) => {
+  const applyVisualizerSettings = useCallback((settings: Partial<VisualizerRenderOptions>) => {
     if (settings.mode) setVizMode(settings.mode);
     if (settings.color) setVizColor(settings.color);
     if (settings.density !== undefined) setVizDensity(settings.density);
@@ -87,13 +87,13 @@ const WinampPlayer: React.FC = () => {
     if (settings.barGap !== undefined) setVizBarGap(settings.barGap);
     if (settings.trail !== undefined) setVizTrail(settings.trail);
     if (settings.mirrored !== undefined) setVizMirrored(settings.mirrored);
-  };
+  }, []);
 
-  const visualizerPresets = [
+  const visualizerPresets = useMemo(() => [
     { name: 'Classic CRT', settings: DEFAULT_VISUALIZER_OPTIONS },
     { name: 'Vapor Trail', settings: { ...DEFAULT_VISUALIZER_OPTIONS, color: '#ff00ff', backgroundColor: '#080010', glow: 0.75, trail: 0.55, mode: 'waveDots' as VisualizerMode } },
     { name: 'Laser Grid', settings: { ...DEFAULT_VISUALIZER_OPTIONS, color: '#00ffff', glow: 0.9, density: 28, barGap: 2, mode: 'mirrorBars' as VisualizerMode } },
-  ];
+  ], []);
   
   const SAMPLE_TRACKS: Track[] = [
     { id: '1', title: 'CYBERPUNK 2077', artist: 'HYPER', source: 'local', url: 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3' },

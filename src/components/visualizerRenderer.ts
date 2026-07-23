@@ -93,7 +93,9 @@ export function drawVisualizerFrame(ctx: CanvasRenderingContext2D, data: Uint8Ar
       ctx.stroke();
     }
   } else if (options.mode === 'plasma') {
-    const avg = data.reduce((sum, value) => sum + value, 0) / data.length;
+    let sum = 0;
+    for (let i = 0; i < data.length; i++) sum += data[i];
+    const avg = sum / data.length;
     const gradient = ctx.createRadialGradient(width / 2, height / 2, 0, width / 2, height / 2, Math.max(width, height) * (avg / 255) * speed);
     gradient.addColorStop(0, color);
     gradient.addColorStop(1, 'transparent');

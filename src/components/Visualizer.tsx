@@ -30,7 +30,6 @@ const Visualizer: React.FC<VisualizerProps> = ({
   mirrored = DEFAULT_VISUALIZER_OPTIONS.mirrored,
 }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const canvasSizeRef = useRef({ width: 0, height: 0 });
 
   const options = useMemo(() => ({
     mode,
@@ -57,7 +56,6 @@ const Visualizer: React.FC<VisualizerProps> = ({
       if (canvas.width !== width || canvas.height !== height) {
         canvas.width = width;
         canvas.height = height;
-        canvasSizeRef.current = { width, height };
       }
     };
 
