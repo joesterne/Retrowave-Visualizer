@@ -8,47 +8,55 @@ const VisualizerWindow: React.FC = () => {
   const [density, setDensity] = useState(10);
   const [speed, setSpeed] = useState(1);
   const [isSettingsOpen, setIsSettingsOpen] = useState(true);
+  const visualizerConfigRef = useRef({ mode, color, density, speed });
 
   const modes: VisualizerMode[] = ['spectrum', 'oscilloscope', 'bars', 'circles', 'plasma', 'mirrorBars', 'radialPulse', 'waveDots'];
 
-  useEffect(() => {
-    const handleMessage = (event: MessageEvent) => {
-      if (event.data?.type === 'VIZ_DATA') {
-        const { data, mode: m, color: c, density: d, speed: s } = event.data;
-        if (m) setMode(m);
-        if (c) setColor(c);
-        if (d) setDensity(d);
-        if (s) setSpeed(s);
-        
-        draw(data, s ?? speed);
-      }
-    };
+  const updateMode = (nextMode: VisualizerMode) => {
+    visualizerConfigRef.current.mode = nextMode;
+    setMode(nextMode);
+  };
 
-    window.addEventListener('message', handleMessage);
-    return () => window.removeEventListener('message', handleMessage);
-  }, []);
+  const updateColor = (nextColor: string) => {
+    visualizerConfigRef.current.color = nextColor;
+    setColor(nextColor);
+  };
 
-  const draw = (data: Uint8Array, speedValue = speed) => {
+  const updateDensity = (nextDensity: number) => {
+    visualizerConfigRef.current.density = nextDensity;
+    setDensity(nextDensity);
+  };
+
+  const updateSpeed = (nextSpeed: number) => {
+    visualizerConfigRef.current.speed = nextSpeed;
+    setSpeed(nextSpeed);
+  };
+
+  const draw = (data: Uint8Array, speedValue = visualizerConfigRef.current.speed) => {
     const canvas = canvasRef.current;
     if (!canvas) return;
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
-    const width = canvas.width;
-    const height = canvas.height;
+    const dpr = window.devicePixelRatio || 1;
+    const width = canvas.width / dpr;
+    const height = canvas.height / dpr;
+    const { mode: currentMode, color: currentColor, density: currentDensity } = visualizerConfigRef.current;
     const playbackSpeed = Math.max(0.25, speedValue);
+
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, width, height);
 
-    if (mode === 'spectrum' || mode === 'bars') {
+    if (currentMode === 'spectrum' || currentMode === 'bars') {
       const barWidth = (width / data.length) * playbackSpeed;
       for (let i = 0; i < data.length; i++) {
         const barHeight = (data[i] / 255) * height;
-        ctx.fillStyle = color;
+        ctx.fillStyle = currentColor;
         ctx.fillRect(i * barWidth, height - barHeight, barWidth - 1, barHeight);
       }
-    } else if (mode === 'oscilloscope') {
+    } else if (currentMode === 'oscilloscope') {
       ctx.lineWidth = 2;
-      ctx.strokeStyle = color;
+      ctx.strokeStyle = currentColor;
       ctx.beginPath();
       const sliceWidth = width / data.length;
       let x = 0;
@@ -61,44 +69,44 @@ const VisualizerWindow: React.FC = () => {
       }
       ctx.lineTo(width, height / 2);
       ctx.stroke();
-    } else if (mode === 'circles') {
+    } else if (currentMode === 'circles') {
       const centerX = width / 2;
       const centerY = height / 2;
-      for (let i = 0; i < density; i++) {
+      for (let i = 0; i < currentDensity; i++) {
         const radius = (data[i] / 255) * (Math.min(width, height) / 2);
         ctx.beginPath();
         ctx.arc(centerX, centerY, radius, 0, 2 * Math.PI);
-        ctx.strokeStyle = color;
+        ctx.strokeStyle = currentColor;
         ctx.lineWidth = 2;
         ctx.stroke();
       }
-    } else if (mode === 'plasma') {
+    } else if (currentMode === 'plasma') {
       const centerX = width / 2;
       const centerY = height / 2;
       const gradient = ctx.createRadialGradient(centerX, centerY, 0, centerX, centerY, Math.max(width, height) / 2);
-      gradient.addColorStop(0, color);
+      gradient.addColorStop(0, currentColor);
       gradient.addColorStop(1, 'transparent');
       ctx.fillStyle = gradient;
       const avg = data.reduce((a, b) => a + b, 0) / data.length;
       ctx.globalAlpha = avg / 255;
       ctx.fillRect(0, 0, width, height);
       ctx.globalAlpha = 1.0;
-    } else if (mode === 'mirrorBars') {
+    } else if (currentMode === 'mirrorBars') {
       const halfHeight = height / 2;
       const barWidth = Math.max(1, width / data.length);
-      ctx.fillStyle = color;
+      ctx.fillStyle = currentColor;
       for (let i = 0; i < data.length; i++) {
         const amp = (data[i] / 255) * halfHeight;
         const x = i * barWidth;
         ctx.fillRect(x, halfHeight - amp, barWidth - 1, amp);
         ctx.fillRect(x, halfHeight, barWidth - 1, amp);
       }
-    } else if (mode === 'radialPulse') {
+    } else if (currentMode === 'radialPulse') {
       const centerX = width / 2;
       const centerY = height / 2;
       const baseRadius = Math.min(width, height) * 0.18;
       const step = Math.max(4, Math.floor(data.length / 96));
-      ctx.strokeStyle = color;
+      ctx.strokeStyle = currentColor;
       ctx.beginPath();
       for (let i = 0; i < data.length; i += step) {
         const angle = (i / data.length) * Math.PI * 2;
@@ -110,11 +118,11 @@ const VisualizerWindow: React.FC = () => {
       }
       ctx.closePath();
       ctx.stroke();
-    } else if (mode === 'waveDots') {
+    } else if (currentMode === 'waveDots') {
       const step = Math.max(2, Math.floor(data.length / 100));
       const spacing = width / Math.ceil(data.length / step);
       let x = 0;
-      ctx.fillStyle = color;
+      ctx.fillStyle = currentColor;
       for (let i = 0; i < data.length; i += step) {
         const normalized = (data[i] - 128) / 128;
         const y = height / 2 + normalized * (height * 0.35);
@@ -128,10 +136,51 @@ const VisualizerWindow: React.FC = () => {
   };
 
   useEffect(() => {
+    const handleMessage = (event: MessageEvent) => {
+      if (event.data?.type === 'VIZ_DATA') {
+        const { data, mode: nextMode, color: nextColor, density: nextDensity, speed: nextSpeed } = event.data;
+        const config = visualizerConfigRef.current;
+
+        if (nextMode && nextMode !== config.mode) {
+          config.mode = nextMode;
+          setMode(nextMode);
+        }
+
+        if (nextColor && nextColor !== config.color) {
+          config.color = nextColor;
+          setColor(nextColor);
+        }
+
+        if (typeof nextDensity === 'number' && nextDensity !== config.density) {
+          config.density = nextDensity;
+          setDensity(nextDensity);
+        }
+
+        if (typeof nextSpeed === 'number' && nextSpeed !== config.speed) {
+          config.speed = nextSpeed;
+          setSpeed(nextSpeed);
+        }
+
+        draw(data, config.speed);
+      }
+    };
+
+    window.addEventListener('message', handleMessage);
+    return () => window.removeEventListener('message', handleMessage);
+  }, []);
+
+  useEffect(() => {
     const resize = () => {
-      if (canvasRef.current) {
-        canvasRef.current.width = window.innerWidth;
-        canvasRef.current.height = window.innerHeight;
+      const canvas = canvasRef.current;
+      if (canvas) {
+        const dpr = window.devicePixelRatio || 1;
+        canvas.width = window.innerWidth * dpr;
+        canvas.height = window.innerHeight * dpr;
+        canvas.style.width = '100vw';
+        canvas.style.height = '100vh';
+
+        const ctx = canvas.getContext('2d');
+        ctx?.setTransform(dpr, 0, 0, dpr, 0, 0);
       }
     };
     window.addEventListener('resize', resize);
@@ -156,7 +205,7 @@ const VisualizerWindow: React.FC = () => {
               <span>Mode</span>
               <select
                 value={mode}
-                onChange={(e) => setMode(e.target.value as VisualizerMode)}
+                onChange={(e) => updateMode(e.target.value as VisualizerMode)}
                 className="bg-black border border-[#00ff00] px-1 py-0.5"
               >
                 {modes.map((m) => (
@@ -168,7 +217,7 @@ const VisualizerWindow: React.FC = () => {
             </label>
             <label className="flex items-center justify-between gap-2">
               <span>Color</span>
-              <input type="color" value={color} onChange={(e) => setColor(e.target.value)} />
+              <input type="color" value={color} onChange={(e) => updateColor(e.target.value)} />
             </label>
             <label className="flex flex-col gap-1">
               <span>Density</span>
@@ -177,7 +226,7 @@ const VisualizerWindow: React.FC = () => {
                 min="1"
                 max="50"
                 value={density}
-                onChange={(e) => setDensity(Number(e.target.value))}
+                onChange={(e) => updateDensity(Number(e.target.value))}
               />
             </label>
             <label className="flex flex-col gap-1">
@@ -188,7 +237,7 @@ const VisualizerWindow: React.FC = () => {
                 max="2"
                 step="0.05"
                 value={speed}
-                onChange={(e) => setSpeed(Number(e.target.value))}
+                onChange={(e) => updateSpeed(Number(e.target.value))}
               />
             </label>
           </div>
