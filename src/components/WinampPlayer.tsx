@@ -582,7 +582,7 @@ const WinampPlayer: React.FC = () => {
               <Visualizer analyser={analyserRef.current} mode={vizMode} color={vizColor} density={vizDensity} />
               <div className="absolute top-2 right-2 flex flex-col gap-2 opacity-0 group-hover:opacity-100 transition-opacity bg-black/50 p-1 rounded">
                 <div className="flex gap-1">
-                  {['spectrum', 'oscilloscope', 'circles', 'plasma'].map(m => (
+                  {['spectrum', 'oscilloscope', 'circles', 'plasma', 'bars', 'dots'].map(m => (
                     <button 
                       key={m}
                       onClick={() => setVizMode(m as VisualizerMode)}

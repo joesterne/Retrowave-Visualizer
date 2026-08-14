@@ -13,6 +13,7 @@
         "thumbnail": { "type": "string", "description": "Thumbnail URL" },
         "source": { "type": "string", "description": "Source (spotify, youtube, local)" },
         "url": { "type": "string", "description": "Audio or video URL" },
+        "order": { "type": "number", "description": "Sort order" },
         "createdAt": { "type": "string", "format": "date-time", "description": "Creation timestamp" }
       },
       "required": ["uid", "type", "id", "title", "createdAt"]

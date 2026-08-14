@@ -90,6 +90,21 @@ const Visualizer: React.FC<VisualizerProps> = ({ analyser, mode, color = '#00ff0
         gradient.addColorStop(1, 'transparent');
         ctx.fillStyle = gradient;
         ctx.fillRect(0, 0, width, height);
+      } else if (mode === 'dots') {
+        analyser.getByteFrequencyData(dataArray);
+        const dotSpacing = Math.max(2, Math.floor(100 / density));
+        const maxDots = Math.floor(width / dotSpacing);
+        let x = 0;
+        
+        for (let i = 0; i < maxDots && i < bufferLength; i++) {
+          const v = dataArray[i] / 255;
+          const y = height - (v * height);
+          ctx.beginPath();
+          ctx.arc(x, y, dotSpacing / 2, 0, 2 * Math.PI);
+          ctx.fillStyle = color;
+          ctx.fill();
+          x += dotSpacing + 2;
+        }
       }
     };
 

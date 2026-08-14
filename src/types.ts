@@ -18,7 +18,7 @@ export interface UserSetting {
   visualizerMode: string;
 }
 
-export type VisualizerMode = 'oscilloscope' | 'spectrum' | 'plasma' | 'bars' | 'circles';
+export type VisualizerMode = 'oscilloscope' | 'spectrum' | 'plasma' | 'bars' | 'circles' | 'dots';
 
 export interface Track {
   id: string;
