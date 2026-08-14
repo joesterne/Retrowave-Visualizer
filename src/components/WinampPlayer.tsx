@@ -1,5 +1,5 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { Play, Pause, SkipBack, SkipForward, Volume2, Search, Heart, Brain, Menu, X, ExternalLink, Radio } from 'lucide-react';
+import React, { useState, useEffect, useRef } from 'react';
+import { Play, Pause, SkipBack, SkipForward, Volume2, Search, Heart, Brain, Menu, X, ExternalLink, Radio, Maximize2, Minimize2 } from 'lucide-react';
 
 declare global {
   interface Window {
@@ -12,7 +12,6 @@ declare global {
 
 import { motion, AnimatePresence } from 'motion/react';
 import Visualizer from './Visualizer';
-import { DEFAULT_VISUALIZER_OPTIONS, VisualizerRenderOptions } from './visualizerRenderer';
 import RetroButton from './RetroButton';
 import { Track, VisualizerMode, Favorite } from '../types';
 import { db, handleFirestoreError, OperationType } from '../firebase';
@@ -39,13 +38,6 @@ const WinampPlayer: React.FC = () => {
   const [vizColor, setVizColor] = useState('#00ff00');
   const [fftSize, setFftSize] = useState(256);
   const [vizDensity, setVizDensity] = useState(10);
-  const [vizSpeed, setVizSpeed] = useState(1);
-  const [vizBackgroundColor, setVizBackgroundColor] = useState(DEFAULT_VISUALIZER_OPTIONS.backgroundColor);
-  const [vizGlow, setVizGlow] = useState(DEFAULT_VISUALIZER_OPTIONS.glow);
-  const [vizLineWidth, setVizLineWidth] = useState(DEFAULT_VISUALIZER_OPTIONS.lineWidth);
-  const [vizBarGap, setVizBarGap] = useState(DEFAULT_VISUALIZER_OPTIONS.barGap);
-  const [vizTrail, setVizTrail] = useState(DEFAULT_VISUALIZER_OPTIONS.trail);
-  const [vizMirrored, setVizMirrored] = useState(DEFAULT_VISUALIZER_OPTIONS.mirrored);
   const [favorites, setFavorites] = useState<any[]>([]);
   const [showPlaylist, setShowPlaylist] = useState(false);
   const [playlistTab, setPlaylistTab] = useState<'search' | 'playlist' | 'connections'>('search');
@@ -54,46 +46,11 @@ const WinampPlayer: React.FC = () => {
   const [isSearching, setIsSearching] = useState(false);
   const [isThinkingOpen, setIsThinkingOpen] = useState(false);
   const [isSpotifyConnected, setIsSpotifyConnected] = useState(false);
-  const [isSpotifyConnecting, setIsSpotifyConnecting] = useState(false);
-  const [spotifyAuthMessage, setSpotifyAuthMessage] = useState<string | null>(null);
   const [isYouTubeConnected, setIsYouTubeConnected] = useState(false);
-  const [isAppleMusicConnected, setIsAppleMusicConnected] = useState(false);
   const [isSettingsLoaded, setIsSettingsLoaded] = useState(false);
   const [popoutWindow, setPopoutWindow] = useState<Window | null>(null);
   const [isGeneratingRadio, setIsGeneratingRadio] = useState(false);
-  const [isGoogleAuthProcessing, setIsGoogleAuthProcessing] = useState(false);
-
-  const visualizerSettings: VisualizerRenderOptions = {
-    mode: vizMode,
-    color: vizColor,
-    density: vizDensity,
-    speed: vizSpeed,
-    backgroundColor: vizBackgroundColor,
-    glow: vizGlow,
-    lineWidth: vizLineWidth,
-    barGap: vizBarGap,
-    trail: vizTrail,
-    mirrored: vizMirrored,
-  };
-
-  const applyVisualizerSettings = (settings: Partial<VisualizerRenderOptions>) => {
-    if (settings.mode) setVizMode(settings.mode);
-    if (settings.color) setVizColor(settings.color);
-    if (settings.density !== undefined) setVizDensity(settings.density);
-    if (settings.speed !== undefined) setVizSpeed(settings.speed);
-    if (settings.backgroundColor) setVizBackgroundColor(settings.backgroundColor);
-    if (settings.glow !== undefined) setVizGlow(settings.glow);
-    if (settings.lineWidth !== undefined) setVizLineWidth(settings.lineWidth);
-    if (settings.barGap !== undefined) setVizBarGap(settings.barGap);
-    if (settings.trail !== undefined) setVizTrail(settings.trail);
-    if (settings.mirrored !== undefined) setVizMirrored(settings.mirrored);
-  };
-
-  const visualizerPresets = [
-    { name: 'Classic CRT', settings: DEFAULT_VISUALIZER_OPTIONS },
-    { name: 'Vapor Trail', settings: { ...DEFAULT_VISUALIZER_OPTIONS, color: '#ff00ff', backgroundColor: '#080010', glow: 0.75, trail: 0.55, mode: 'waveDots' as VisualizerMode } },
-    { name: 'Laser Grid', settings: { ...DEFAULT_VISUALIZER_OPTIONS, color: '#00ffff', glow: 0.9, density: 28, barGap: 2, mode: 'mirrorBars' as VisualizerMode } },
-  ];
+  const [isFullscreenViz, setIsFullscreenViz] = useState(false);
   
   const SAMPLE_TRACKS: Track[] = [
     { id: '1', title: 'CYBERPUNK 2077', artist: 'HYPER', source: 'local', url: 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3' },
@@ -108,16 +65,6 @@ const WinampPlayer: React.FC = () => {
     { name: 'Retro Orange', color: '#ff8800' },
     { name: 'Vaporwave Purple', color: '#8800ff' },
     { name: 'Matrix Green', color: '#00aa00' },
-    { name: 'Sunset Red', color: '#ff4d4d' },
-    { name: 'Laser Yellow', color: '#ffe600' },
-    { name: 'Ice Blue', color: '#66ccff' },
-    { name: 'Midnight Indigo', color: '#4b5dff' },
-    { name: 'Neon Lime', color: '#b7ff00' },
-    { name: 'Hot Coral', color: '#ff5f87' },
-    { name: 'Electric Violet', color: '#b026ff' },
-    { name: 'Mint Glow', color: '#4dffb8' },
-    { name: 'Crimson Pulse', color: '#ff1744' },
-    { name: 'Deep Teal', color: '#00b3a4' },
   ];
 
   const audioContextRef = useRef<AudioContext | null>(null);
@@ -127,7 +74,6 @@ const WinampPlayer: React.FC = () => {
   const popoutWindowRef = useRef<Window | null>(null);
   const youtubePlayerRef = useRef<any>(null);
   const spotifyPlayerRef = useRef<any>(null);
-  const spotifyAuthPopupCheckRef = useRef<number | null>(null);
   const [spotifyToken, setSpotifyToken] = useState<string | null>(null);
   const [isSpotifyReady, setIsSpotifyReady] = useState(false);
   const [spotifyDeviceId, setSpotifyDeviceId] = useState<string | null>(null);
@@ -144,61 +90,30 @@ const WinampPlayer: React.FC = () => {
         setPopoutWindow(null);
         return;
       }
-      if (vizMode === 'oscilloscope' || vizMode === 'waveDots') {
-        analyserRef.current?.getByteTimeDomainData(dataArray);
-      } else {
-        analyserRef.current?.getByteFrequencyData(dataArray);
-      }
+      analyserRef.current?.getByteFrequencyData(dataArray);
       popoutWindow.postMessage({
         type: 'VIZ_DATA',
         data: dataArray,
         mode: vizMode,
         color: vizColor,
-        settings: visualizerSettings
-      }, window.location.origin);
+        density: vizDensity
+      }, '*');
       animationId = requestAnimationFrame(sendData);
     };
 
     sendData();
     return () => cancelAnimationFrame(animationId);
-  }, [popoutWindow, vizMode, vizColor, vizDensity, vizSpeed, vizBackgroundColor, vizGlow, vizLineWidth, vizBarGap, vizTrail, vizMirrored]);
+  }, [popoutWindow, vizMode, vizColor, vizDensity]);
 
   const togglePopout = () => {
     if (popoutWindow) {
       popoutWindow.close();
       setPopoutWindow(null);
     } else {
-      const win = window.open(`${window.location.origin}/visualizer`, 'WinampVisualizer', 'width=1000,height=700');
-      if (!win) {
-        alert('Pop-out blocked. Please allow popups for this site.');
-        return;
-      }
-      win.focus();
+      const win = window.open('/visualizer', 'WinampVisualizer', 'width=800,height=600');
       setPopoutWindow(win);
     }
   };
-
-  useEffect(() => {
-    const handlePopoutSettings = (event: MessageEvent) => {
-      if (event.origin !== window.location.origin || event.data?.type !== 'VIZ_SETTINGS_CHANGED') return;
-      applyVisualizerSettings(event.data.settings ?? {});
-    };
-
-    window.addEventListener('message', handlePopoutSettings);
-    return () => window.removeEventListener('message', handlePopoutSettings);
-  }, []);
-
-  useEffect(() => {
-    if (!popoutWindow) return;
-
-    const timer = window.setInterval(() => {
-      if (popoutWindow.closed) {
-        setPopoutWindow(null);
-      }
-    }, 500);
-
-    return () => window.clearInterval(timer);
-  }, [popoutWindow]);
 
   useEffect(() => {
     // Load YouTube API
@@ -222,29 +137,9 @@ const WinampPlayer: React.FC = () => {
   }, []);
 
   useEffect(() => {
-    if (user) return;
-    const saved = window.localStorage.getItem('retrowave-settings');
-    if (saved) {
-      const data = JSON.parse(saved);
-      if (data.volume !== undefined) setVolume(data.volume);
-      if (data.fftSize !== undefined) setFftSize(data.fftSize);
-      applyVisualizerSettings(data.visualizer ?? {});
-    }
-    setIsSettingsLoaded(true);
-  }, [user]);
-
-  useEffect(() => {
-    if (user || !isSettingsLoaded) return;
-    window.localStorage.setItem('retrowave-settings', JSON.stringify({
-      volume,
-      fftSize,
-      visualizer: visualizerSettings,
-    }));
-  }, [user, isSettingsLoaded, volume, fftSize, vizMode, vizColor, vizDensity, vizSpeed, vizBackgroundColor, vizGlow, vizLineWidth, vizBarGap, vizTrail, vizMirrored]);
-
-  useEffect(() => {
     if (!user) {
       setFavorites([]);
+      setIsSettingsLoaded(false);
       return;
     }
 
@@ -276,13 +171,6 @@ const WinampPlayer: React.FC = () => {
         if (data.vizColor !== undefined) setVizColor(data.vizColor);
         if (data.fftSize !== undefined) setFftSize(data.fftSize);
         if (data.vizDensity !== undefined) setVizDensity(data.vizDensity);
-        if (data.vizSpeed !== undefined) setVizSpeed(data.vizSpeed);
-        if (data.vizBackgroundColor !== undefined) setVizBackgroundColor(data.vizBackgroundColor);
-        if (data.vizGlow !== undefined) setVizGlow(data.vizGlow);
-        if (data.vizLineWidth !== undefined) setVizLineWidth(data.vizLineWidth);
-        if (data.vizBarGap !== undefined) setVizBarGap(data.vizBarGap);
-        if (data.vizTrail !== undefined) setVizTrail(data.vizTrail);
-        if (data.vizMirrored !== undefined) setVizMirrored(data.vizMirrored);
       }
       setIsSettingsLoaded(true);
     }, (error) => {
@@ -309,13 +197,6 @@ const WinampPlayer: React.FC = () => {
           vizColor,
           fftSize,
           vizDensity,
-          vizSpeed,
-          vizBackgroundColor,
-          vizGlow,
-          vizLineWidth,
-          vizBarGap,
-          vizTrail,
-          vizMirrored,
           updatedAt: serverTimestamp()
         }, { merge: true });
       } catch (error) {
@@ -325,7 +206,7 @@ const WinampPlayer: React.FC = () => {
 
     const timeoutId = setTimeout(saveSettings, 1000); // Debounce saves
     return () => clearTimeout(timeoutId);
-  }, [user, isSettingsLoaded, volume, vizMode, vizColor, fftSize, vizDensity, vizSpeed, vizBackgroundColor, vizGlow, vizLineWidth, vizBarGap, vizTrail, vizMirrored]);
+  }, [user, isSettingsLoaded, volume, vizMode, vizColor, fftSize, vizDensity]);
 
   // Check connection status
   useEffect(() => {
@@ -336,7 +217,6 @@ const WinampPlayer: React.FC = () => {
         const data = await res.json();
         setIsSpotifyConnected(data.spotify);
         setIsYouTubeConnected(data.youtube);
-        setIsAppleMusicConnected(Boolean(data.appleMusic));
       } catch (error) {
         console.error("Failed to check connection status:", error);
       }
@@ -348,16 +228,8 @@ const WinampPlayer: React.FC = () => {
     const handleMessage = (event: MessageEvent) => {
       if (event.data?.type === 'SPOTIFY_AUTH_SUCCESS') {
         setIsSpotifyConnected(true);
-        setIsSpotifyConnecting(false);
-        setSpotifyAuthMessage('Spotify connected successfully.');
-        if (spotifyAuthPopupCheckRef.current !== null) {
-          window.clearInterval(spotifyAuthPopupCheckRef.current);
-          spotifyAuthPopupCheckRef.current = null;
-        }
       } else if (event.data?.type === 'YOUTUBE_AUTH_SUCCESS') {
         setIsYouTubeConnected(true);
-      } else if (event.data?.type === 'APPLE_MUSIC_AUTH_SUCCESS') {
-        setIsAppleMusicConnected(true);
       }
     };
     window.addEventListener('message', handleMessage);
@@ -375,8 +247,6 @@ const WinampPlayer: React.FC = () => {
       alert('Please login first');
       return;
     }
-    setIsSpotifyConnecting(true);
-    setSpotifyAuthMessage(null);
     try {
       const res = await fetch(`/api/auth/spotify/url?userId=${user.uid}`);
       const data = await res.json();
@@ -385,47 +255,12 @@ const WinampPlayer: React.FC = () => {
       }
       const { url } = data;
       if (!url) throw new Error('No auth URL returned');
-      const authWindow = window.open(url, 'spotify_auth', 'width=600,height=800');
-      if (!authWindow) {
-        throw new Error('Popup blocked. Please allow popups and try again.');
-      }
-
-      spotifyAuthPopupCheckRef.current = window.setInterval(() => {
-        if (authWindow.closed) {
-          if (spotifyAuthPopupCheckRef.current !== null) {
-            window.clearInterval(spotifyAuthPopupCheckRef.current);
-            spotifyAuthPopupCheckRef.current = null;
-          }
-          setIsSpotifyConnecting(false);
-          if (!isSpotifyConnected) {
-            setSpotifyAuthMessage('Spotify connection window closed before completion.');
-          }
-        }
-      }, 500);
+      window.open(url, 'spotify_auth', 'width=600,height=800');
     } catch (error) {
-      setIsSpotifyConnecting(false);
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      setSpotifyAuthMessage(`Spotify connection failed: ${errorMessage}`);
       console.error('Spotify auth error:', error);
+      alert(`Spotify connection failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
   };
-
-  const handleGoogleAuthToggle = useCallback(async () => {
-    if (isGoogleAuthProcessing) return;
-
-    setIsGoogleAuthProcessing(true);
-    try {
-      if (user) {
-        await signOut();
-      } else {
-        await signIn();
-      }
-    } catch (error) {
-      console.error('Google auth action failed:', error);
-    } finally {
-      setIsGoogleAuthProcessing(false);
-    }
-  }, [isGoogleAuthProcessing, user, signIn, signOut]);
 
   const connectYouTube = async () => {
     if (!user) {
@@ -444,29 +279,6 @@ const WinampPlayer: React.FC = () => {
     } catch (error) {
       console.error('YouTube auth error:', error);
       alert(`YouTube connection failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
-    }
-  };
-
-  const connectAppleMusic = async () => {
-    if (!user) {
-      alert('Please login first');
-      return;
-    }
-    try {
-      const res = await fetch(`/api/auth/apple-music/url?userId=${user.uid}`);
-      const data = await res.json();
-      if (!res.ok) {
-        throw new Error(data.error || 'Failed to get auth URL');
-      }
-      const { url } = data;
-      if (!url) throw new Error('No auth URL returned');
-      const authWindow = window.open(url, 'apple_music_auth', 'width=600,height=800');
-      if (!authWindow) {
-        throw new Error('Popup blocked. Please allow popups and try again.');
-      }
-    } catch (error) {
-      console.error('Apple Music auth error:', error);
-      alert(`Apple Music connection failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
   };
 
@@ -743,12 +555,12 @@ const WinampPlayer: React.FC = () => {
   };
 
   return (
-    <div className="flex flex-col items-center justify-center min-h-screen bg-[#111] text-[#00ff00] font-mono p-4 lg:p-8">
+    <div className="flex flex-col items-center justify-center min-h-screen bg-[#111] text-[#00ff00] font-mono p-4">
       {/* Hidden YouTube Player */}
       <div id="youtube-player" style={{ display: 'none' }}></div>
 
       {/* Main Player Window */}
-      <div className="w-full max-w-md lg:max-w-5xl bg-[#222] border-4 border-[#444] shadow-[8px_8px_0px_rgba(0,0,0,0.8)] overflow-hidden">
+      <div className="w-full max-w-md bg-[#222] border-4 border-[#444] shadow-[8px_8px_0px_rgba(0,0,0,0.8)] overflow-hidden">
         {/* Title Bar */}
         <div className="flex items-center justify-between bg-gradient-to-r from-[#000080] to-[#1084d0] px-2 py-1 text-white text-xs font-bold select-none">
           <div className="flex items-center gap-2">
@@ -763,14 +575,14 @@ const WinampPlayer: React.FC = () => {
         </div>
 
         {/* Display Area */}
-        <div className="p-4 grid gap-4 lg:grid-cols-[minmax(0,1fr)_280px]">
-          <div className="flex gap-4 h-40 lg:h-80 lg:col-span-1">
+        <div className="p-4 flex flex-col gap-4">
+          <div className="flex gap-4 h-32">
             {/* Visualizer Section */}
             <div className="flex-1 relative group">
-              <Visualizer analyser={analyserRef.current} mode={vizMode} color={vizColor} density={vizDensity} speed={vizSpeed} backgroundColor={vizBackgroundColor} glow={vizGlow} lineWidth={vizLineWidth} barGap={vizBarGap} trail={vizTrail} mirrored={vizMirrored} />
+              <Visualizer analyser={analyserRef.current} mode={vizMode} color={vizColor} density={vizDensity} />
               <div className="absolute top-2 right-2 flex flex-col gap-2 opacity-0 group-hover:opacity-100 transition-opacity bg-black/50 p-1 rounded">
                 <div className="flex gap-1">
-                  {['spectrum', 'oscilloscope', 'bars', 'circles', 'plasma', 'mirrorBars', 'radialPulse', 'waveDots'].map(m => (
+                  {['spectrum', 'oscilloscope', 'circles', 'plasma'].map(m => (
                     <button 
                       key={m}
                       onClick={() => setVizMode(m as VisualizerMode)}
@@ -785,8 +597,15 @@ const WinampPlayer: React.FC = () => {
                   >
                     <ExternalLink size={8} />
                   </button>
+                  <button 
+                    onClick={() => setIsFullscreenViz(!isFullscreenViz)}
+                    className={cn("w-2 h-2 flex items-center justify-center text-[#00ff00] hover:text-white")}
+                    title="Fullscreen Visualizer"
+                  >
+                    <Maximize2 size={8} />
+                  </button>
                 </div>
-                <div className="flex gap-1 flex-wrap max-w-[90px]">
+                <div className="flex gap-1 flex-wrap max-w-[60px]">
                   {RETRO_PALETTE.map(p => (
                     <button 
                       key={p.color}
@@ -796,16 +615,6 @@ const WinampPlayer: React.FC = () => {
                       title={p.name}
                     />
                   ))}
-                </div>
-                <div className="flex items-center gap-1 mt-1 border-t border-[#333] pt-1">
-                  <span className="text-[6px] text-[#00ff00] uppercase">Custom</span>
-                  <input
-                    type="color"
-                    value={vizColor}
-                    onChange={(e) => setVizColor(e.target.value)}
-                    className="h-3 w-5 bg-transparent border border-[#333] p-0 cursor-pointer"
-                    title="Custom visualizer color"
-                  />
                 </div>
                 
                 {/* Fine-tuning controls */}
@@ -838,18 +647,6 @@ const WinampPlayer: React.FC = () => {
                       />
                     </div>
                   )}
-                  <div className="flex flex-col gap-0.5">
-                    <span className="text-[6px] text-[#00ff00] uppercase">SPEED</span>
-                    <input 
-                      type="range"
-                      min="0.25"
-                      max="2"
-                      step="0.05"
-                      value={vizSpeed}
-                      onChange={(e) => setVizSpeed(parseFloat(e.target.value))}
-                      className="w-full accent-[#00ff00] h-1 bg-[#222] appearance-none cursor-pointer"
-                    />
-                  </div>
                 </div>
               </div>
             </div>
@@ -887,48 +684,8 @@ const WinampPlayer: React.FC = () => {
             </div>
           </div>
 
-          <div className="hidden lg:flex flex-col gap-3 bg-black border border-[#333] p-3 text-[10px]">
-            <div className="flex items-center justify-between border-b border-[#333] pb-2">
-              <span className="font-bold text-white">VISUALIZER SETTINGS</span>
-              <button onClick={togglePopout} className="text-[#00ff00] hover:text-white">POP OUT</button>
-            </div>
-            <label className="flex flex-col gap-1">
-              <span>MODE</span>
-              <select value={vizMode} onChange={(e) => setVizMode(e.target.value as VisualizerMode)} className="bg-black border border-[#00ff00] px-2 py-1">
-                {['spectrum', 'oscilloscope', 'bars', 'circles', 'plasma', 'mirrorBars', 'radialPulse', 'waveDots'].map((mode) => <option key={mode} value={mode}>{mode}</option>)}
-              </select>
-            </label>
-            <div className="grid grid-cols-4 gap-2">
-              {RETRO_PALETTE.map((paletteColor) => (
-                <button key={paletteColor.color} onClick={() => setVizColor(paletteColor.color)} className={cn("h-7 border", vizColor === paletteColor.color ? "border-white" : "border-[#333]")} style={{ backgroundColor: paletteColor.color }} title={paletteColor.name} />
-              ))}
-            </div>
-            <div className="grid grid-cols-2 gap-2">
-              <label className="flex flex-col gap-1"><span>COLOR</span><input type="color" value={vizColor} onChange={(e) => setVizColor(e.target.value)} className="h-8 w-full bg-black" /></label>
-              <label className="flex flex-col gap-1"><span>BACKGROUND</span><input type="color" value={vizBackgroundColor} onChange={(e) => setVizBackgroundColor(e.target.value)} className="h-8 w-full bg-black" /></label>
-            </div>
-            <div className="grid grid-cols-3 gap-2">
-              {visualizerPresets.map((preset) => <button key={preset.name} onClick={() => applyVisualizerSettings(preset.settings)} className="border border-[#333] px-2 py-1 hover:border-[#00ff00]">{preset.name}</button>)}
-            </div>
-            {[
-              ['FFT', Math.log2(fftSize), 5, 12, 1, (value: number) => setFftSize(Math.pow(2, value))],
-              ['DENSITY', vizDensity, 1, 64, 1, setVizDensity],
-              ['SPEED', vizSpeed, 0.25, 2, 0.05, setVizSpeed],
-              ['GLOW', vizGlow, 0, 1, 0.05, setVizGlow],
-              ['LINE WIDTH', vizLineWidth, 1, 8, 0.5, setVizLineWidth],
-              ['BAR GAP', vizBarGap, 0, 8, 0.5, setVizBarGap],
-              ['TRAIL', vizTrail, 0, 0.9, 0.05, setVizTrail],
-            ].map(([label, value, min, max, step, setter]) => (
-              <label key={label as string} className="flex flex-col gap-1">
-                <span>{String(label)} ({Number(value).toFixed(Number(step) < 1 ? 2 : 0)})</span>
-                <input type="range" min={min as number} max={max as number} step={step as number} value={value as number} onChange={(e) => (setter as (value: number) => void)(Number(e.target.value))} className="accent-[#00ff00]" />
-              </label>
-            ))}
-            <label className="flex items-center gap-2"><input type="checkbox" checked={vizMirrored} onChange={(e) => setVizMirrored(e.target.checked)} /><span>MIRROR SPECTRUM</span></label>
-          </div>
-
           {/* Controls */}
-          <div className="flex items-center justify-between gap-2 lg:col-span-2">
+          <div className="flex items-center justify-between gap-2">
             <div className="flex gap-1">
               <RetroButton onClick={() => {}}><SkipBack size={12} /></RetroButton>
               <RetroButton onClick={togglePlay}>
@@ -955,9 +712,6 @@ const WinampPlayer: React.FC = () => {
             </div>
 
             <div className="flex gap-1">
-              <RetroButton onClick={togglePopout} variant={popoutWindow ? 'primary' : 'secondary'}>
-                <ExternalLink size={12} />
-              </RetroButton>
               <RetroButton 
                 onClick={toggleFavorite} 
                 variant={favorites.find(f => f.externalId === currentTrack?.id) ? 'primary' : 'secondary'}
@@ -1020,17 +774,13 @@ const WinampPlayer: React.FC = () => {
                         <span className="text-[10px] font-bold text-white">GOOGLE ACCOUNT</span>
                       </div>
                       <button 
-                        onClick={handleGoogleAuthToggle}
-                        disabled={isGoogleAuthProcessing}
+                        onClick={() => user ? signOut() : signIn().catch(e => console.error("Login failed:", e))}
                         className={cn(
                           "px-2 py-1 text-[8px] font-bold border",
-                          user
-                            ? "border-[#4285F4] text-[#4285F4] hover:text-[#ff0000] hover:border-[#ff0000]"
-                            : "border-[#444] text-[#444] hover:border-[#00ff00] hover:text-[#00ff00]",
-                          isGoogleAuthProcessing && "opacity-70 cursor-wait"
+                          user ? "border-[#4285F4] text-[#4285F4] hover:text-[#ff0000] hover:border-[#ff0000]" : "border-[#444] text-[#444] hover:border-[#00ff00] hover:text-[#00ff00]"
                         )}
                       >
-                        {isGoogleAuthProcessing ? 'PROCESSING...' : user ? 'SIGN OUT' : 'LOGIN'}
+                        {user ? 'SIGN OUT' : 'LOGIN'}
                       </button>
                     </div>
                     <div className="flex items-center justify-between bg-black border border-[#333] p-2">
@@ -1040,31 +790,18 @@ const WinampPlayer: React.FC = () => {
                       </div>
                       <button 
                         onClick={connectSpotify}
-                        disabled={isSpotifyConnected || isSpotifyConnecting}
                         className={cn(
                           "px-2 py-1 text-[8px] font-bold border",
-                          isSpotifyConnected
-                            ? "border-[#1DB954] text-[#1DB954]"
-                            : isSpotifyConnecting
-                              ? "border-[#1DB954] text-[#1DB954] opacity-80 cursor-wait"
-                              : "border-[#444] text-[#444] hover:border-[#00ff00] hover:text-[#00ff00]"
+                          isSpotifyConnected ? "border-[#1DB954] text-[#1DB954]" : "border-[#444] text-[#444] hover:border-[#00ff00] hover:text-[#00ff00]"
                         )}
                       >
-                        {isSpotifyConnected ? 'CONNECTED' : isSpotifyConnecting ? 'CONNECTING...' : 'CONNECT'}
+                        {isSpotifyConnected ? 'CONNECTED' : 'CONNECT'}
                       </button>
                     </div>
-                    {spotifyAuthMessage && (
-                      <p className={cn(
-                        "text-[8px] text-center uppercase",
-                        spotifyAuthMessage.toLowerCase().includes('successfully') ? "text-[#1DB954]" : "text-[#ff8800]"
-                      )}>
-                        {spotifyAuthMessage}
-                      </p>
-                    )}
                     <div className="flex items-center justify-between bg-black border border-[#333] p-2">
                       <div className="flex items-center gap-2">
                         <div className={cn("w-2 h-2 rounded-full", isYouTubeConnected ? "bg-[#FF0000]" : "bg-[#444]")} />
-                        <span className="text-[10px] font-bold text-white">YOUTUBE MUSIC</span>
+                        <span className="text-[10px] font-bold text-white">YOUTUBE</span>
                       </div>
                       <button 
                         onClick={connectYouTube}
@@ -1074,21 +811,6 @@ const WinampPlayer: React.FC = () => {
                         )}
                       >
                         {isYouTubeConnected ? 'CONNECTED' : 'CONNECT'}
-                      </button>
-                    </div>
-                    <div className="flex items-center justify-between bg-black border border-[#333] p-2">
-                      <div className="flex items-center gap-2">
-                        <div className={cn("w-2 h-2 rounded-full", isAppleMusicConnected ? "bg-[#FA233B]" : "bg-[#444]")} />
-                        <span className="text-[10px] font-bold text-white">APPLE MUSIC</span>
-                      </div>
-                      <button 
-                        onClick={connectAppleMusic}
-                        className={cn(
-                          "px-2 py-1 text-[8px] font-bold border",
-                          isAppleMusicConnected ? "border-[#FA233B] text-[#FA233B]" : "border-[#444] text-[#444] hover:border-[#00ff00] hover:text-[#00ff00]"
-                        )}
-                      >
-                        {isAppleMusicConnected ? 'CONNECTED' : 'CONNECT'}
                       </button>
                     </div>
                     {!user && (
@@ -1239,36 +961,15 @@ const WinampPlayer: React.FC = () => {
           </div>
           <div className="flex gap-2">
             {user && !isSpotifyConnected && (
-              <button
-                onClick={connectSpotify}
-                disabled={isSpotifyConnecting}
-                className={cn("hover:underline text-[#1DB954]", isSpotifyConnecting && "opacity-70 cursor-wait")}
-              >
-                {isSpotifyConnecting ? 'CONNECTING SPOTIFY...' : 'CONNECT SPOTIFY'}
-              </button>
+              <button onClick={connectSpotify} className="hover:underline text-[#1DB954]">CONNECT SPOTIFY</button>
             )}
             {user && !isYouTubeConnected && (
-              <button onClick={connectYouTube} className="hover:underline text-[#FF0000]">CONNECT YT MUSIC</button>
-            )}
-            {user && !isAppleMusicConnected && (
-              <button onClick={connectAppleMusic} className="hover:underline text-[#FA233B]">CONNECT APPLE MUSIC</button>
+              <button onClick={connectYouTube} className="hover:underline text-[#FF0000]">CONNECT YOUTUBE</button>
             )}
             {!user ? (
-              <button
-                onClick={handleGoogleAuthToggle}
-                disabled={isGoogleAuthProcessing}
-                className={cn("hover:underline", isGoogleAuthProcessing && "opacity-70 cursor-wait")}
-              >
-                {isGoogleAuthProcessing ? 'LOGGING IN...' : 'LOGIN'}
-              </button>
+              <button onClick={signIn} className="hover:underline">LOGIN</button>
             ) : (
-              <button
-                onClick={handleGoogleAuthToggle}
-                disabled={isGoogleAuthProcessing}
-                className={cn("hover:underline", isGoogleAuthProcessing && "opacity-70 cursor-wait")}
-              >
-                {isGoogleAuthProcessing ? 'LOGGING OUT...' : 'LOGOUT'}
-              </button>
+              <button onClick={signOut} className="hover:underline">LOGOUT</button>
             )}
           </div>
         </div>
@@ -1290,6 +991,26 @@ const WinampPlayer: React.FC = () => {
         onClose={() => setIsThinkingOpen(false)} 
         currentTrack={currentTrack} 
       />
+
+      {/* Fullscreen Visualizer Overlay */}
+      <AnimatePresence>
+        {isFullscreenViz && (
+          <motion.div 
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black"
+          >
+            <Visualizer analyser={analyserRef.current} mode={vizMode} color={vizColor} density={vizDensity} />
+            <button
+              onClick={() => setIsFullscreenViz(false)}
+              className="absolute top-4 right-4 p-2 bg-[#222] border-2 border-[#444] text-[#00ff00] hover:text-white hover:border-[#00ff00] transition-colors"
+            >
+              <Minimize2 size={24} />
+            </button>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 };

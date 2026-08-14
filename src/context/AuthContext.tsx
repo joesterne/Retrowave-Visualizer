@@ -1,4 +1,4 @@
-import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
+import React, { createContext, useContext, useEffect, useState } from 'react';
 import { User, onAuthStateChanged } from 'firebase/auth';
 import { auth, signIn, signOut } from '../firebase';
 
@@ -19,7 +19,6 @@ const AuthContext = createContext<AuthContextType>({
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
-  const signInInFlightRef = useRef<Promise<void> | null>(null);
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (u) => {
@@ -29,43 +28,26 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return () => unsubscribe();
   }, []);
 
-  const handleSignIn = useCallback(async () => {
-    if (signInInFlightRef.current) {
-      return signInInFlightRef.current;
+  const handleSignIn = async () => {
+    try {
+      await signIn();
+    } catch (error) {
+      console.error("Login failed:", error);
+      throw error;
     }
+  };
 
-    signInInFlightRef.current = (async () => {
-      try {
-        await signIn();
-      } catch (error) {
-        console.error("Login failed:", error);
-        throw error;
-      } finally {
-        signInInFlightRef.current = null;
-      }
-    })();
-
-    return signInInFlightRef.current;
-  }, []);
-
-  const handleSignOut = useCallback(async () => {
+  const handleSignOut = async () => {
     try {
       await signOut();
     } catch (error) {
       console.error("Logout failed:", error);
       throw error;
     }
-  }, []);
-
-  const contextValue = useMemo(() => ({
-    user,
-    loading,
-    signIn: handleSignIn,
-    signOut: handleSignOut
-  }), [user, loading, handleSignIn, handleSignOut]);
+  };
 
   return (
-    <AuthContext.Provider value={contextValue}>
+    <AuthContext.Provider value={{ user, loading, signIn: handleSignIn, signOut: handleSignOut }}>
       {children}
     </AuthContext.Provider>
   );
