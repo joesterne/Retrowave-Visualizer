@@ -109,9 +109,11 @@ const WinampPlayer: React.FC = () => {
     if (popoutWindow) {
       popoutWindow.close();
       setPopoutWindow(null);
+      popoutWindowRef.current = null;
     } else {
       const win = window.open('/visualizer', 'WinampVisualizer', 'width=800,height=600');
       setPopoutWindow(win);
+      popoutWindowRef.current = win;
     }
   };
 
@@ -360,6 +362,23 @@ const WinampPlayer: React.FC = () => {
       spotifyPlayerRef.current = player;
     }
   }, [spotifyToken]);
+
+  useEffect(() => {
+    return () => {
+      if (audioContextRef.current) {
+        audioContextRef.current.close();
+      }
+      if (youtubePlayerRef.current) {
+        youtubePlayerRef.current.destroy();
+      }
+      if (spotifyPlayerRef.current) {
+        spotifyPlayerRef.current.disconnect();
+      }
+      if (popoutWindowRef.current) {
+        popoutWindowRef.current.close();
+      }
+    };
+  }, []);
 
   const togglePlay = async () => {
     initAudio();
